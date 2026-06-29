@@ -1,0 +1,11 @@
+transformers==4.40.0
+datasets==2.19.0
+xgboost==2.0.3
+optuna==3.6.1
+wandb==0.16.6
+scikit-learn==1.4.2
+pandas==2.2.2
+numpy
+nltk==3.8.1
+python-dotenv==1.0.1
+torch==2.2.2
