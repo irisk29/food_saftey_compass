@@ -222,3 +222,10 @@ __marimo__/
 
 #Data
 data/
+# Kaggle credentials (secret)
+kaggle.json
+**/kaggle.json
+
+# Large datasets
+*.zip
+pre-choosing-dataset/yelp_academic_dataset_review.json
