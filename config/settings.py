@@ -13,10 +13,17 @@ INPUT_DATA_PATH = os.path.join(PROJECT_ROOT, "postprocessing/enriched_allergy_ha
 MODEL_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "model_outputs")
 
 # Feature Categorization
+# NOTE: "stars" is excluded — it is one of the two conditions used to construct the
+# is_hazard label itself (keyword match AND stars <= 3), so including it as a model
+# input would be direct label leakage. "medical_lexicon_density" and
+# "negation_window_flag" are excluded for the same reason: both are computed from
+# overlap with the same keyword list used to build the label, so they leak the
+# labeling rule rather than an independent signal. "vader_neg_intensity" is kept as
+# a general sentiment signal not tied to the specific labeling keywords.
 TABULAR_FEATURES = [
-    "stars", "useful", "funny", "cool",
+    "useful", "funny", "cool",
     "word_count", "char_count", "exclamation_count",
-    "medical_lexicon_density", "vader_neg_intensity", "negation_window_flag"
+    "vader_neg_intensity"
 ]
 TEXT_COLUMN = "text"
 TARGET_COLUMN = "is_hazard"

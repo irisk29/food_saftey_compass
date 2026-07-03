@@ -9,3 +9,4 @@ numpy
 nltk==3.8.1
 python-dotenv==1.0.1
 torch==2.2.2
+requests==2.32.5
