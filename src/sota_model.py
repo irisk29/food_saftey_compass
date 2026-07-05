@@ -31,12 +31,16 @@ class AsymmetricSafetyLoss(nn.Module):
 class CustomSafetyTrainer(Trainer):
     """Overrides the default cross-entropy loss function with our asymmetric safety metric."""
 
+    def __init__(self, *args, asymmetric_weight=cfg.ASYMMETRIC_WEIGHT, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.asymmetric_weight = asymmetric_weight
+
     def compute_loss(self, model, inputs, return_outputs=False):
         labels = inputs.get("labels")
         outputs = model(**inputs)
         logits = outputs.get("logits")
 
-        loss_fn = AsymmetricSafetyLoss()
+        loss_fn = AsymmetricSafetyLoss(weight_fn=self.asymmetric_weight)
         loss = loss_fn(logits, labels)
 
         return (loss, outputs) if return_outputs else loss
@@ -57,12 +61,15 @@ def compute_metrics(eval_pred):
     }
 
 
-def run_sota_training(train_df, test_df, epochs=3, lr=2e-5, batch_size=8):
+def run_sota_training(train_df, test_df, epochs=3, lr=2e-5, batch_size=8, asymmetric_weight=None):
     """
     Tokenizes raw text sequences and runs the custom fine-tuning
     process using the DeBERTa-v3 architecture—patched for Apple Silicon stability.
     """
-    print(f"\n--- Initializing SOTA DeBERTa-v3 Base Architecture on {cfg.DEVICE} ---")
+    if asymmetric_weight is None:
+        asymmetric_weight = cfg.ASYMMETRIC_WEIGHT
+
+    print(f"\n--- Initializing SOTA DeBERTa-v3 Base Architecture on {cfg.DEVICE} (w={asymmetric_weight}) ---")
     model_nm = "microsoft/deberta-v3-base"
 
     tokenizer = AutoTokenizer.from_pretrained(model_nm, use_fast=False)
@@ -125,6 +132,7 @@ def run_sota_training(train_df, test_df, epochs=3, lr=2e-5, batch_size=8):
         eval_dataset=test_tokenized,
         tokenizer=tokenizer,
         compute_metrics=compute_metrics,
+        asymmetric_weight=asymmetric_weight,
     )
 
     trainer.train()
