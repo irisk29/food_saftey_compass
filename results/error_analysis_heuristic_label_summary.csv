@@ -1,0 +1,12 @@
+error_type,primary_mode,count,mean_words,mean_prob,share_of_error_type
+FN,unexplained_fn,6,183.66666666666666,,0.5
+FN,unsafe_handling_no_illness,4,118.25,,0.333
+FN,contamination_no_illness,2,116.5,,0.167
+FP,illness_mentioned_not_caused_here,96,179.23958333333334,,0.478
+FP,unexplained_fp,43,160.09302325581396,,0.214
+FP,negated_hazard,25,154.12,,0.124
+FP,neutral_allergen_mention,23,231.3913043478261,,0.114
+FP,secondhand_or_hearsay,5,230.4,,0.025
+FP,hypothetical_or_speculative,4,91.5,,0.02
+FP,unpleasant_not_unsafe,3,361.6666666666667,,0.015
+FP,generic_complaint_no_hazard,2,242.5,,0.01

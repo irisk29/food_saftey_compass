@@ -1,65 +1,93 @@
 import gc
+import json
 import os
+
+import optuna
+import pandas as pd
 import torch
 import wandb
-import optuna
 
 import config.settings as cfg
 from src.data_pipeline import load_and_split_data
 from src.baseline_model import train_and_evaluate_baseline
-from src.sota_model import run_sota_training
+from src.sota_model import run_sota_training, selection_disagreement
 
 # Prevent system warnings from cluttering training feedback logs
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-# os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.95"
 os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
-# os.environ["PYTORCH_MPS_LOW_WATERMARK_RATIO"] = "0.70"
+
 
 def main():
     print("========================================================")
     print("     ALLERGEN & FOOD SAFETY HAZARD COMPASS ENGINE       ")
     print("========================================================\n")
 
+    os.makedirs(cfg.RESULTS_DIR, exist_ok=True)
+
     # Load and partition dataset
     train_df, test_df = load_and_split_data()
 
     # 1. Train and evaluate your traditional XGBoost baseline
-    baseline_pipeline = train_and_evaluate_baseline(train_df, test_df)
+    train_and_evaluate_baseline(train_df, test_df)
 
     # Initialize your global Weights & Biases workspace session
     wandb.login()
 
+    trial_records = []
+
     # 2. Define the Optuna hyperparameter optimization trial closure
     def objective(trial):
         trainer = None
-        # Configure search boundaries for hyperparameter tuning
         suggested_lr = trial.suggest_float("learning_rate", 1e-5, 5e-5, log=True)
         suggested_batch = trial.suggest_categorical("batch_size", [4, 8, 16])
 
-        # Initialize W&B nested run logging
         run = wandb.init(
             project=os.getenv("WANDB_PROJECT", "allergen-safety-compass"),
             name=f"optuna_trial_lr_{suggested_lr:.2e}_bs_{suggested_batch}",
             reinit=True,
-            config={"learning_rate": suggested_lr, "batch_size": suggested_batch}
+            config={"learning_rate": suggested_lr, "batch_size": suggested_batch,
+                    "loss_variant": cfg.LOSS_VARIANT, "asymmetric_weight": cfg.ASYMMETRIC_WEIGHT},
         )
 
         try:
-            # Run deep learning fine-tuning for 2 quick epochs per trial
             trainer = run_sota_training(
                 train_df=train_df,
                 test_df=test_df,
                 epochs=4,
                 lr=suggested_lr,
-                batch_size=suggested_batch
+                batch_size=suggested_batch,
             )
 
-            # Evaluate target metrics
             eval_metrics = trainer.evaluate()
-            target_score = eval_metrics["eval_recall"]
 
-            # Log metrics to your active dashboard
+            # PR-AUC, not recall. Recall alone is maximised by flagging every review —
+            # a degenerate solution this project has actually produced (100% recall /
+            # 37.5% precision at weight=50). PR-AUC is also threshold-free, so the
+            # hyperparameter search stays independent of our 0.20 operating point.
+            target_score = eval_metrics[f"eval_{cfg.HPO_METRIC}"]
+
+            # Record what the alternative objectives would have picked, so the choice
+            # of selection metric is an evidenced decision rather than an assertion.
+            record = {
+                "trial": trial.number,
+                "learning_rate": suggested_lr,
+                "batch_size": suggested_batch,
+                **{k.replace("eval_", ""): v for k, v in eval_metrics.items()
+                   if k.startswith("eval_") and isinstance(v, (int, float))},
+            }
+            disagreement = selection_disagreement(trainer)
+            if disagreement:
+                record.update(disagreement)
+            trial_records.append(record)
+
             wandb.log(eval_metrics)
+
+            print(f"    trial {trial.number}: pr_auc={eval_metrics.get('eval_pr_auc', float('nan')):.4f} "
+                  f"f2={eval_metrics.get('eval_f2', float('nan')):.4f} "
+                  f"recall={eval_metrics.get('eval_recall', float('nan')):.4f} "
+                  f"precision={eval_metrics.get('eval_precision', float('nan')):.4f} "
+                  f"pos_rate={eval_metrics.get('eval_pred_positive_rate', float('nan')):.3f}")
+
             return target_score
 
         except Exception as e:
@@ -68,10 +96,9 @@ def main():
         finally:
             run.finish()
 
-            print("\n--- Flushing MPS Backend Allocation Pools ---")
+            print("\n--- Flushing Backend Allocation Pools ---")
             if trainer is not None:
                 try:
-                    # Explicitly shift model parameters off the GPU before deletion
                     trainer.model.cpu()
                 except Exception:
                     pass
@@ -79,15 +106,48 @@ def main():
 
             gc.collect()
             if torch.backends.mps.is_available():
-                torch.mps.empty_cache()  # Flush the hardware allocation cache
+                torch.mps.empty_cache()
+            elif torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
-    print("\n--- Starting Automated Hyperparameter Optimization Space Sweeps ---")
+    print(f"\n--- Hyperparameter Sweep (objective = {cfg.HPO_METRIC}) ---")
     study = optuna.create_study(direction="maximize")
-    study.optimize(objective, n_trials=3)  # Runs 3 trials to fit inside your 3-week resource budget
+    study.optimize(objective, n_trials=3)
+
+    # -------------------------------------------------------------------------
+    # Persist the sweep so the reported numbers live in the repo, not only in W&B.
+    # -------------------------------------------------------------------------
+    if trial_records:
+        trials_df = pd.DataFrame(trial_records).sort_values(cfg.HPO_METRIC, ascending=False)
+        trials_path = os.path.join(cfg.RESULTS_DIR, "optuna_trials.csv")
+        trials_df.to_csv(trials_path, index=False)
+        print(f"\nTrial-level metrics saved to: {trials_path}")
+
+        # Would F2 have picked a different configuration than PR-AUC?
+        if "f2" in trials_df.columns:
+            by_pr = trials_df.sort_values("pr_auc", ascending=False).iloc[0]
+            by_f2 = trials_df.sort_values("f2", ascending=False).iloc[0]
+            print("\n--- Selection-metric comparison (across trials) ---")
+            print(f"  PR-AUC picks trial {int(by_pr['trial'])}: "
+                  f"lr={by_pr['learning_rate']:.2e} bs={int(by_pr['batch_size'])}")
+            print(f"  F2     picks trial {int(by_f2['trial'])}: "
+                  f"lr={by_f2['learning_rate']:.2e} bs={int(by_f2['batch_size'])}")
+            print(f"  Agree: {int(by_pr['trial']) == int(by_f2['trial'])}")
+
+    best = {
+        "objective_metric": cfg.HPO_METRIC,
+        "best_value": study.best_value,
+        "best_params": study.best_params,
+        "loss_variant": cfg.LOSS_VARIANT,
+        "asymmetric_weight": cfg.ASYMMETRIC_WEIGHT,
+        "decision_threshold": cfg.DECISION_THRESHOLD,
+    }
+    with open(os.path.join(cfg.RESULTS_DIR, "best_hyperparameters.json"), "w") as f:
+        json.dump(best, f, indent=2)
 
     print("\n========================================================")
     print("OPTIMIZATION SWEEP COMPLETE")
-    print(f"Best Trial Score (Recall Optimization Target): {study.best_value:.4f}")
+    print(f"Best Trial Score ({cfg.HPO_METRIC}): {study.best_value:.4f}")
     print(f"Optimal Hyperparameters Found: {study.best_params}")
     print("========================================================")
 

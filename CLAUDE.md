@@ -61,41 +61,65 @@ techniques work/fail, tied to the business problem = 90–100.
     `learning_rate`/`batch_size` for the DeBERTa fine-tune, objective = `eval_recall`, logged to
     Weights & Biases. Device gate in [config/settings.py](config/settings.py) supports
     MPS/CUDA/CPU.
-  - Still **missing** from the step-4 plan: no word/document-embedding model (item 2:
-    Word2Vec/Doc2Vec/Sentence-BERT) and no topic modeling (item 4: LDA/NMF for hazard-type
-    discovery) — currently only 2 of the 4 planned approaches (TF-IDF+XGBoost, DeBERTa) exist.
-  - No results/metrics have been captured back into the repo yet (no saved run outputs, error
-    analysis, or comparison writeup) — `main.py` prints reports/logs to stdout/W&B but nothing
-    is persisted to the repo for the writeup.
+  - [src/losses.py](src/losses.py) — three loss formulations, comparable head to head:
+    `pos_weight` (the original label-keyed weighting, which is exactly
+    `BCEWithLogitsLoss(pos_weight=w)`), `focal_asymmetric` (weight scales with `(1-p)^gamma`),
+    and `fn_gated` (penalty only where `p < tau`). The latter two are genuinely
+    error-dependent, so "penalises false negatives" is now a true statement.
+  - [src/topic_model.py](src/topic_model.py) — LDA + NMF over the 1,500 hazard reviews,
+    swept over K ∈ {2,3,4,5,6,8,10}, scored with in-corpus NPMI coherence and validated
+    against the LLM-assigned `hazard_type`. This is the **second course technique**.
+  - [src/features.py](src/features.py) — feature engineering lifted out of the postprocessing
+    notebook so the fresh holdout set can be enriched identically. Verified to reproduce the
+    training CSV exactly on all six derived columns.
+  - [analysis/error_analysis.py](analysis/error_analysis.py) — rule-based failure-mode
+    taxonomy applied to both model errors and the labelling rule itself.
+  - [tests/test_losses.py](tests/test_losses.py) — 9 tests; notably a regression guard
+    asserting an all-positive model is caught by F2/PR-AUC/flag-rate.
 
 ## Known risks / gaps (most important)
-- **Label leakage risk is still unaddressed.** Label is a keyword+stars heuristic; the baseline
-  model is fed the same lexicon-density/negation features used to construct that heuristic, so
-  both the baseline and (via text) the DeBERTa model risk relearning the labeling rule rather
-  than a generalizable hazard signal. No keyword-free validation set or hand-labeled gold set
-  exists yet — still needed before results can be trusted for the writeup.
-- The asymmetric loss + 0.20 threshold in `sota_model.py` optimize purely for recall; this is a
-  defensible business framing (missing a hazard is worse than a false alarm) but should be
-  stated explicitly and contrasted with precision in the error analysis, not just reported as
-  "better recall."
-- Word/document embeddings and topic modeling (step-4 items 2 & 4) are not implemented — needed
-  to hit the "≥2 techniques + comparison" rubric band with real variety, and topic modeling in
-  particular is the way to move past binary hazard detection into hazard-type discovery.
+- **Label leakage: addressed, with one caveat.** `config/settings.py` excludes `stars`,
+  `medical_lexicon_density`, and `negation_window_flag` from `TABULAR_FEATURES` (all three
+  derive from the labelling rule). A gold evaluation set now exists — see below. The residual
+  caveat: TF-IDF over raw text still trivially recovers a keyword-based label, which is why the
+  baseline scores far higher against the heuristic label than against gold.
+- **Two gold sets, only one of them valid for model metrics:**
+  - `labeling/gold_dataset.csv` (1,500 rows) was sampled from the *enriched* dataset, so
+    **1,334 of its rows are in the training split**. Unusable for model evaluation. Still valid
+    for measuring the labelling rule itself (85.8% agreement; heuristic precision 73.2%,
+    recall 97.9%) because that comparison never consults a model.
+  - `labeling/gold_dataset_holdout.csv` — sampled from `build_holdout_pool.py` output, which is
+    verified to have **zero overlap** with the enriched dataset. This is the set to report on.
+- Selection metrics are now F2 (checkpoint) and PR-AUC (hyperparameter search); bare recall was
+  removed after the all-positive collapse was confirmed at w=50.
+- The heuristic's 97.9% recall is measured *inside* an already keyword-filtered dataset, so it
+  is circular and optimistic. The holdout set gives the honest estimate.
 
 ## Step-4 modeling direction (the main deliverable)
 Build a comparison of text-mining approaches, not a single classifier:
-1. **TF-IDF + linear classifier** — ✅ implemented (`src/baseline_model.py`, XGBoost not linear —
-   consider also reporting a plain linear model e.g. logistic regression for a cleaner "what TF-IDF
-   alone sees" comparison).
-2. **Word/Document embeddings** (Word2Vec/Doc2Vec or Sentence-BERT) — ❌ not yet implemented.
-3. **Fine-tuned transformer** (BERT/DistilBERT) — ✅ implemented as DeBERTa-v3-base
-   (`src/sota_model.py`), with recall-biased custom loss + threshold, Optuna-tuned.
-4. (Optional) **Topic modeling (LDA/NMF)** to characterize hazard *types* (allergy vs.
-   food poisoning vs. choking) — ❌ not yet implemented.
+1. **TF-IDF + classifier** — ✅ `src/baseline_model.py`. Now class-balanced via
+   `scale_pos_weight` so the comparison against the weighted transformer is fair.
+   Counted as a *baseline*, not as one of the five course techniques.
+2. **Word/Document embeddings** — ❌ not implemented; deliberately skipped in favour of
+   topic modeling, which connects to the hazard-type research question.
+3. **Fine-tuned transformer** — ✅ DeBERTa-v3-base (`src/sota_model.py`), asymmetric loss
+   + lowered threshold, Optuna-tuned on PR-AUC. Course technique #1.
+4. **Topic modeling (LDA/NMF)** — ✅ `src/topic_model.py`. Course technique #2.
 
-For each: proper metrics (not just accuracy), multiple baselines, variant experiments,
-and qualitative **error analysis** tied back to the food-safety business problem — none of
-this synthesis/writeup exists yet.
+### Topic-modeling findings so far (results/topic_model_*.csv)
+- Selection by coherence alone is unreliable here: NPMI rises monotonically with K, so it
+  always picks the largest K offered. NMF at K∈{2,3,4} is degenerate (one topic holds
+  84–95% of documents). The code therefore excludes degenerate fits and reports both the
+  coherence-selected and validation-selected K.
+- Selected: **LDA K=4** and **NMF K=6**.
+- Recovery of the known hazard types is **weak**: purity 0.716 vs a 0.690 majority-class
+  baseline; NMI 0.10–0.12 against a shuffle null of 0.006–0.014.
+- But the **lift analysis is the real result**: both models isolate a coherent
+  allergen/gluten topic — NMF topic 1 (`gluten, celiac, cross contamination, gf`) has
+  **lift 5.28** for `allergic_reaction`, LDA topic 0 has lift 4.18. What the models cannot
+  do is subdivide the dominant `food_poisoning` mass (69% of the validated set).
+  Report this as "the technique finds the rare, lexically-distinct hazard type and fails
+  on the common, lexically-diffuse one" — that is the *why* the rubric rewards.
 
 ## Working notes
 - Large data files are gitignored; raw Yelp JSON is not committed.
