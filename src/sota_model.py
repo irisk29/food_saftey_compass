@@ -1,128 +1,176 @@
-import torch
-import torch.nn as nn
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
-from datasets import Dataset
-import config.settings as cfg
+import inspect
+
 import numpy as np
-from sklearn.metrics import recall_score, precision_score, f1_score
+import torch
+from sklearn.metrics import (
+    average_precision_score,
+    fbeta_score,
+    f1_score,
+    precision_score,
+    recall_score,
+)
+from transformers import (
+    AutoModelForSequenceClassification,
+    AutoTokenizer,
+    Trainer,
+    TrainingArguments,
+)
+from datasets import Dataset
 
-
-class AsymmetricSafetyLoss(nn.Module):
-    def __init__(self, weight_fn=cfg.ASYMMETRIC_WEIGHT):
-        super().__init__()
-        self.weight_fn = weight_fn
-        # Use BCEWithLogitsLoss for numerical stability over raw probabilities
-        self.bce = nn.BCEWithLogitsLoss(reduction='none')
-
-    def forward(self, logits, targets):
-        logits = logits.view(-1)
-        targets = targets.float().view(-1)
-
-        # Calculate base cross entropy values
-        base_loss = self.bce(logits, targets)
-
-        # Apply the 50x multiplier penalty factor specifically to False Negatives
-        weight_mask = torch.ones_like(targets)
-        weight_mask[targets == 1.0] = self.weight_fn
-
-        return (base_loss * weight_mask).mean()
+import config.settings as cfg
+from src.losses import AsymmetricSafetyLoss
 
 
 class CustomSafetyTrainer(Trainer):
-    """Overrides the default cross-entropy loss function with our asymmetric safety metric."""
+    """Replaces the default cross-entropy objective with our asymmetric safety loss."""
 
-    def __init__(self, *args, asymmetric_weight=cfg.ASYMMETRIC_WEIGHT, **kwargs):
+    def __init__(self, *args, asymmetric_weight=None, loss_variant=None,
+                 gamma=None, tau=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.asymmetric_weight = asymmetric_weight
+        self.loss_fn = AsymmetricSafetyLoss(
+            weight_fn=cfg.ASYMMETRIC_WEIGHT if asymmetric_weight is None else asymmetric_weight,
+            variant=cfg.LOSS_VARIANT if loss_variant is None else loss_variant,
+            gamma=cfg.FOCAL_GAMMA if gamma is None else gamma,
+            tau=cfg.FN_GATE_TAU if tau is None else tau,
+        )
+        print(f"    loss: AsymmetricSafetyLoss({self.loss_fn.extra_repr()})")
 
-    def compute_loss(self, model, inputs, return_outputs=False):
-        labels = inputs.get("labels")
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        # Pop the labels so the model never runs its own internal loss branch.
+        # The previous code passed labels through and relied on an invalid
+        # problem_type ("binary_classification") to make HuggingFace silently skip
+        # that branch — which worked by accident and only on transformers 4.40.
+        # `**kwargs` absorbs `num_items_in_batch`, added to this signature in 4.46.
+        labels = inputs.pop("labels")
         outputs = model(**inputs)
-        logits = outputs.get("logits")
-
-        loss_fn = AsymmetricSafetyLoss(weight_fn=self.asymmetric_weight)
-        loss = loss_fn(logits, labels)
-
+        loss = self.loss_fn(outputs.logits, labels)
         return (loss, outputs) if return_outputs else loss
 
 
 def compute_metrics(eval_pred):
-    """Calculates evaluation metrics using a safety-optimized probability threshold."""
-    logits, labels = eval_pred
-    probs = 1 / (1 + np.exp(-logits.flatten()))
+    """
+    Metrics at the deployed threshold, plus threshold-free PR-AUC.
 
-    # LOWERED THRESHOLD: Flag as a hazard if the probability is greater than 20%
-    preds = (probs > 0.20).astype(int)
+    `pred_positive_rate` is reported deliberately: an all-positive model scores
+    perfect recall, and we have observed exactly that at weight=50. Seeing the rate
+    sit at 1.0 makes the degenerate solution obvious instead of flattering.
+    """
+    logits, labels = eval_pred
+    probs = 1 / (1 + np.exp(-np.asarray(logits).flatten()))
+    labels = np.asarray(labels).flatten().astype(int)
+
+    preds = (probs >= cfg.DECISION_THRESHOLD).astype(int)
+    preds_50 = (probs >= 0.50).astype(int)
 
     return {
         "precision": precision_score(labels, preds, zero_division=0),
         "recall": recall_score(labels, preds, zero_division=0),
-        "f1": f1_score(labels, preds, zero_division=0)
+        "f1": f1_score(labels, preds, zero_division=0),
+        # F2 weights recall 2x precision — matches the business asymmetry, but unlike
+        # bare recall it still punishes a model that flags everything.
+        "f2": fbeta_score(labels, preds, beta=cfg.FBETA, zero_division=0),
+        # Threshold-free, so hyperparameter search is not entangled with our 0.20 choice.
+        "pr_auc": average_precision_score(labels, probs),
+        "pred_positive_rate": float(preds.mean()),
+        # Same model at the conventional threshold, for the trade-off table.
+        "precision_at_50": precision_score(labels, preds_50, zero_division=0),
+        "recall_at_50": recall_score(labels, preds_50, zero_division=0),
+        "f2_at_50": fbeta_score(labels, preds_50, beta=cfg.FBETA, zero_division=0),
     }
 
 
-def run_sota_training(train_df, test_df, epochs=3, lr=2e-5, batch_size=8, asymmetric_weight=None):
+def _build_training_args(**kwargs):
     """
-    Tokenizes raw text sequences and runs the custom fine-tuning
-    process using the DeBERTa-v3 architecture—patched for Apple Silicon stability.
+    TrainingArguments across transformers versions.
+
+    `evaluation_strategy` was renamed `eval_strategy` in 4.41. The project pins 4.40
+    but is trained on machines that have drifted ahead, so pick whichever the
+    installed version actually accepts rather than crashing on import.
+    """
+    accepted = set(inspect.signature(TrainingArguments.__init__).parameters)
+    strategy = kwargs.pop("_eval_strategy")
+    key = "eval_strategy" if "eval_strategy" in accepted else "evaluation_strategy"
+    kwargs[key] = strategy
+    return TrainingArguments(**{k: v for k, v in kwargs.items() if k in accepted})
+
+
+def _trainer_tokenizer_kwarg(tokenizer):
+    """`tokenizer=` was deprecated in favour of `processing_class=` in transformers 4.46."""
+    accepted = set(inspect.signature(Trainer.__init__).parameters)
+    return {"processing_class": tokenizer} if "processing_class" in accepted else {"tokenizer": tokenizer}
+
+
+def tokenize_split(df, tokenizer, max_length=256):
+    """Tokenized HF dataset from a dataframe. Shared with the evaluation pipeline."""
+    patched = df.copy()
+    # Labels forced to float32: the head emits a single logit, and int64 labels
+    # trigger a 'square_i64' crash on the MPS backend.
+    patched[cfg.TARGET_COLUMN] = patched[cfg.TARGET_COLUMN].astype(np.float32)
+
+    ds = Dataset.from_pandas(
+        patched[[cfg.TEXT_COLUMN, cfg.TARGET_COLUMN]].rename(columns={cfg.TARGET_COLUMN: "label"}),
+        preserve_index=False,
+    )
+    return ds.map(
+        lambda batch: tokenizer(batch[cfg.TEXT_COLUMN], truncation=True, max_length=max_length),
+        batched=True,
+    )
+
+
+def load_tokenizer(model_nm="microsoft/deberta-v3-base"):
+    return AutoTokenizer.from_pretrained(model_nm, use_fast=False)
+
+
+def run_sota_training(train_df, test_df, epochs=3, lr=2e-5, batch_size=8,
+                      asymmetric_weight=None, loss_variant=None, gamma=None,
+                      return_tokenized=False):
+    """
+    Fine-tunes DeBERTa-v3 with the asymmetric safety loss.
+
+    Checkpoint selection uses cfg.CHECKPOINT_METRIC (F2), not recall — recall alone
+    is maximised by predicting every review a hazard.
     """
     if asymmetric_weight is None:
         asymmetric_weight = cfg.ASYMMETRIC_WEIGHT
 
-    print(f"\n--- Initializing SOTA DeBERTa-v3 Base Architecture on {cfg.DEVICE} (w={asymmetric_weight}) ---")
+    print(f"\n--- DeBERTa-v3 Base on {cfg.DEVICE} "
+          f"(w={asymmetric_weight}, variant={loss_variant or cfg.LOSS_VARIANT}) ---")
     model_nm = "microsoft/deberta-v3-base"
 
-    tokenizer = AutoTokenizer.from_pretrained(model_nm, use_fast=False)
+    tokenizer = load_tokenizer(model_nm)
 
-    # FIX 1: Explicitly define problem_type to stop HuggingFace from defaulting to MSE Loss
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model_nm,
-        num_labels=1,
-        problem_type="binary_classification"
-    )
+    # num_labels=1 -> single logit, read through a sigmoid. No problem_type is set:
+    # labels are popped before the forward pass, so the model's internal loss branch
+    # is never reached and cannot default to MSE.
+    model = AutoModelForSequenceClassification.from_pretrained(model_nm, num_labels=1)
     model.to(cfg.DEVICE)
 
-    # Helper validation closure for tokenization alignment
-    def tokenize_fn(batch):
-        return tokenizer(batch[cfg.TEXT_COLUMN], truncation=True, max_length=256)
+    train_tokenized = tokenize_split(train_df, tokenizer)
+    test_tokenized = tokenize_split(test_df, tokenizer)
 
-    # FIX 2: Explicitly force labels to float32 to prevent the 'square_i64' MPS crash
-    train_df_patched = train_df.copy()
-    test_df_patched = test_df.copy()
-    train_df_patched[cfg.TARGET_COLUMN] = train_df_patched[cfg.TARGET_COLUMN].astype(np.float32)
-    test_df_patched[cfg.TARGET_COLUMN] = test_df_patched[cfg.TARGET_COLUMN].astype(np.float32)
-
-    # Format datasets cleanly using the patched dataframes
-    train_ds = Dataset.from_pandas(
-        train_df_patched[[cfg.TEXT_COLUMN, cfg.TARGET_COLUMN]].rename(columns={cfg.TARGET_COLUMN: "label"}))
-    test_ds = Dataset.from_pandas(
-        test_df_patched[[cfg.TEXT_COLUMN, cfg.TARGET_COLUMN]].rename(columns={cfg.TARGET_COLUMN: "label"}))
-
-    train_tokenized = train_ds.map(tokenize_fn, batched=True)
-    test_tokenized = test_ds.map(tokenize_fn, batched=True)
-
-    # Calculate micro-batching steps dynamically
-    # If target batch_size is 16, per_device is 4, accumulation_steps becomes 4
+    # Micro-batching: keep the effective batch at `batch_size` while capping the
+    # per-device batch at 4 so activations fit on MPS.
     per_device_batch = 4 if batch_size >= 8 else batch_size
     accum_steps = batch_size // per_device_batch
 
-    # Set up runtime parameters for the deep learning training loop
-    training_args = TrainingArguments(
+    training_args = _build_training_args(
         output_dir=cfg.MODEL_OUTPUT_DIR,
         learning_rate=lr,
         per_device_eval_batch_size=batch_size,
-        per_device_train_batch_size=per_device_batch,  # Micro-batch size fed to GPU
-        gradient_accumulation_steps=accum_steps,  # Accumulate steps before backpropagation
-        eval_accumulation_steps=1,  # Offloads validation tensors step-by-step to host RAM
+        per_device_train_batch_size=per_device_batch,
+        gradient_accumulation_steps=accum_steps,
+        eval_accumulation_steps=1,
         num_train_epochs=epochs,
         weight_decay=0.01,
-        evaluation_strategy="epoch",
+        _eval_strategy="epoch",
         save_strategy="epoch",
+        save_total_limit=1,
         logging_steps=50,
         load_best_model_at_end=True,
-        metric_for_best_model="recall",
+        metric_for_best_model=cfg.CHECKPOINT_METRIC,
+        greater_is_better=True,
         report_to="wandb",
-        fp16=False  # Keep False on Mac MPS as FP16 can occasionally cause nan gradients on older macOS arms
+        fp16=False,  # FP16 on MPS can produce nan gradients on older macOS builds
     )
 
     trainer = CustomSafetyTrainer(
@@ -130,11 +178,40 @@ def run_sota_training(train_df, test_df, epochs=3, lr=2e-5, batch_size=8, asymme
         args=training_args,
         train_dataset=train_tokenized,
         eval_dataset=test_tokenized,
-        tokenizer=tokenizer,
         compute_metrics=compute_metrics,
         asymmetric_weight=asymmetric_weight,
+        loss_variant=loss_variant,
+        gamma=gamma,
+        **_trainer_tokenizer_kwarg(tokenizer),
     )
 
     trainer.train()
 
+    if return_tokenized:
+        return trainer, tokenizer, test_tokenized
     return trainer
+
+
+def selection_disagreement(trainer):
+    """
+    Which epoch F2 picks vs which epoch PR-AUC picks.
+
+    Reported rather than silently resolved: if the two metrics choose different
+    checkpoints, that is a concrete illustration of why the old recall-only objective
+    was unsafe, and it costs nothing to extract from the log history.
+    """
+    history = [h for h in trainer.state.log_history if "eval_f2" in h]
+    if not history:
+        return None
+
+    def best(metric):
+        row = max(history, key=lambda h: h.get(f"eval_{metric}", float("-inf")))
+        return {"epoch": row.get("epoch"), "value": row.get(f"eval_{metric}")}
+
+    f2_best, pr_best = best("f2"), best("pr_auc")
+    return {
+        "f2_choice_epoch": f2_best["epoch"], "f2_choice_value": f2_best["value"],
+        "pr_auc_choice_epoch": pr_best["epoch"], "pr_auc_choice_value": pr_best["value"],
+        "metrics_agree": f2_best["epoch"] == pr_best["epoch"],
+        "epochs_logged": len(history),
+    }

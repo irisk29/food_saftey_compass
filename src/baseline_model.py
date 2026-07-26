@@ -7,10 +7,15 @@ from sklearn.metrics import classification_report, confusion_matrix
 import config.settings as cfg
 
 
-def build_baseline_pipeline():
+def build_baseline_pipeline(scale_pos_weight=1.0):
     """
     Constructs a multi-modal Scikit-Learn Pipeline combining
     TF-IDF text features and normalized tabular metadata.
+
+    `scale_pos_weight` matters for fairness of the headline comparison: the DeBERTa
+    model trains with a large penalty on the hazard class, so an unweighted baseline
+    is handicapped by construction at any shared threshold. Passing the empirical
+    negative/positive ratio puts both models on comparable footing.
     """
     # Text Processor configuration (enforces internal lowercasing for the baseline)
     text_processor = TfidfVectorizer(max_features=2500, stop_words='english', lowercase=True)
@@ -26,8 +31,6 @@ def build_baseline_pipeline():
         ]
     )
 
-    # Compute class weights to counter dataset imbalance
-    # scale_pos_weight = total_negative_examples / total_positive_examples
     pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
         ('classifier', xgb.XGBClassifier(
@@ -35,20 +38,27 @@ def build_baseline_pipeline():
             eval_metric="logloss",
             n_estimators=200,
             max_depth=6,
-            learning_rate=0.05
+            learning_rate=0.05,
+            scale_pos_weight=scale_pos_weight
         ))
     ])
 
     return pipeline
 
 
-def train_and_evaluate_baseline(train_df, test_df):
+def train_and_evaluate_baseline(train_df, test_df, balance_classes=True):
     """Trains and executes complete valuation diagnostics for the baseline model."""
     print("\n--- Training Traditional XGBoost Baseline Pipeline ---")
-    pipeline = build_baseline_pipeline()
+
+    y_train = train_df[cfg.TARGET_COLUMN]
+    n_pos = int((y_train == 1).sum())
+    n_neg = int((y_train == 0).sum())
+    spw = (n_neg / n_pos) if (balance_classes and n_pos) else 1.0
+    print(f"    class balance: {n_neg} benign / {n_pos} hazard -> scale_pos_weight={spw:.2f}")
+
+    pipeline = build_baseline_pipeline(scale_pos_weight=spw)
 
     X_train = train_df[cfg.TABULAR_FEATURES + [cfg.TEXT_COLUMN]]
-    y_train = train_df[cfg.TARGET_COLUMN]
     X_test = test_df[cfg.TABULAR_FEATURES + [cfg.TEXT_COLUMN]]
     y_test = test_df[cfg.TARGET_COLUMN]
 
