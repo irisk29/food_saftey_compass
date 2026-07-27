@@ -47,6 +47,12 @@ TARGET_COLUMN = "is_hazard"
 ASYMMETRIC_WEIGHT = 50.0
 RANDOM_STATE = 42
 TEST_SIZE = 0.2
+# Validation fraction, taken out of the TRAIN split (0.2 * 0.8 = 16% of the data).
+# It exists so that checkpoint selection and the Optuna objective never touch the
+# test split — otherwise the test-split numbers are selection-biased upward. The
+# validation split is carved out of train AFTER the test split, so the test split
+# is byte-identical to the one used before validation existed.
+VAL_SIZE = 0.2
 
 # Decision threshold. Lowered from 0.50 because a missed hazard costs ~100x a false
 # alarm (see COST_FALSE_NEGATIVE / COST_FALSE_POSITIVE in analysis/evaluation_pipeline.py),

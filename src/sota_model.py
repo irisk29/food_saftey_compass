@@ -123,12 +123,18 @@ def load_tokenizer(model_nm="microsoft/deberta-v3-base"):
 
 def run_sota_training(train_df, test_df, epochs=3, lr=2e-5, batch_size=8,
                       asymmetric_weight=None, loss_variant=None, gamma=None,
-                      return_tokenized=False):
+                      return_tokenized=False, eval_df=None):
     """
     Fine-tunes DeBERTa-v3 with the asymmetric safety loss.
 
     Checkpoint selection uses cfg.CHECKPOINT_METRIC (F2), not recall — recall alone
     is maximised by predicting every review a hazard.
+
+    `eval_df` is the split used for checkpoint selection (and whatever
+    `trainer.evaluate()` scores afterwards). Pass the validation split here so the
+    test split stays out of every selection decision. If None, falls back to
+    `test_df` — which makes the test-split numbers selection-biased ("in-selection")
+    and should only be used for quick experiments, never reported results.
     """
     if asymmetric_weight is None:
         asymmetric_weight = cfg.ASYMMETRIC_WEIGHT
@@ -145,8 +151,13 @@ def run_sota_training(train_df, test_df, epochs=3, lr=2e-5, batch_size=8,
     model = AutoModelForSequenceClassification.from_pretrained(model_nm, num_labels=1)
     model.to(cfg.DEVICE)
 
+    if eval_df is None:
+        print("    [warn] no eval_df given — checkpoint selection will use the TEST "
+              "split, making its numbers in-selection. Pass the validation split.")
+        eval_df = test_df
+
     train_tokenized = tokenize_split(train_df, tokenizer)
-    test_tokenized = tokenize_split(test_df, tokenizer)
+    eval_tokenized = tokenize_split(eval_df, tokenizer)
 
     # Micro-batching: keep the effective batch at `batch_size` while capping the
     # per-device batch at 4 so activations fit on MPS.
@@ -177,7 +188,7 @@ def run_sota_training(train_df, test_df, epochs=3, lr=2e-5, batch_size=8,
         model=model,
         args=training_args,
         train_dataset=train_tokenized,
-        eval_dataset=test_tokenized,
+        eval_dataset=eval_tokenized,
         compute_metrics=compute_metrics,
         asymmetric_weight=asymmetric_weight,
         loss_variant=loss_variant,
@@ -188,6 +199,10 @@ def run_sota_training(train_df, test_df, epochs=3, lr=2e-5, batch_size=8,
     trainer.train()
 
     if return_tokenized:
+        # The reporting split is always test_df, tokenized separately from the
+        # eval split so downstream evaluation never accidentally scores validation.
+        test_tokenized = tokenize_split(test_df, tokenizer) if eval_df is not test_df \
+            else eval_tokenized
         return trainer, tokenizer, test_tokenized
     return trainer
 

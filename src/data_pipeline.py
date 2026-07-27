@@ -7,10 +7,18 @@ import config.settings as cfg
 from src.features import enrich
 
 
-def load_and_split_data():
+def load_and_split_data(with_validation=False):
     """
-    Loads the enriched dataset and creates reproducible train/test splits
-    for both tabular and textual structures.
+    Loads the enriched dataset and creates reproducible splits.
+
+    Default: (train, test) — unchanged from the original two-way split.
+
+    `with_validation=True`: (train, val, test). The validation split is carved out
+    of the train split *after* the test split, so the test split is byte-identical
+    in both modes (and identical to the historical one — everything documented about
+    which gold rows fall in the test split still holds). Validation is what
+    checkpoint selection and hyperparameter search are allowed to see; the test
+    split is reserved for reporting only.
     """
     resolved_path = os.path.abspath(cfg.INPUT_DATA_PATH)
     print(f"Resolved absolute path: {resolved_path}")
@@ -28,8 +36,20 @@ def load_and_split_data():
         stratify=df[cfg.TARGET_COLUMN]
     )
 
-    print(f"Data split successfully. Train Size: {len(train_df)} | Test Size: {len(test_df)}")
-    return train_df, test_df
+    if not with_validation:
+        print(f"Data split successfully. Train Size: {len(train_df)} | Test Size: {len(test_df)}")
+        return train_df, test_df
+
+    train_df, val_df = train_test_split(
+        train_df,
+        test_size=cfg.VAL_SIZE,
+        random_state=cfg.RANDOM_STATE,
+        stratify=train_df[cfg.TARGET_COLUMN]
+    )
+
+    print(f"Data split successfully. Train Size: {len(train_df)} | "
+          f"Val Size: {len(val_df)} | Test Size: {len(test_df)}")
+    return train_df, val_df, test_df
 
 
 def load_gold_holdout(path=None, require=True):

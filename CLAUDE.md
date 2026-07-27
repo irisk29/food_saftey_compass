@@ -46,7 +46,10 @@ techniques work/fail, tied to the business problem = 90–100.
   negation_window_flag`.
 - **Modeling code now exists under [src/](src/) and is wired together by [main.py](main.py):**
   - [src/data_pipeline.py](src/data_pipeline.py) — loads `enriched_allergy_hazard_dataset.csv`,
-    stratified train/test split (80/20, `random_state=42`).
+    stratified train/test split (80/20, `random_state=42`); `with_validation=True` further
+    carves a validation split out of train (64/16/20 overall, test split unchanged).
+    Checkpoint selection and the Optuna objective see only the validation split, so the
+    test-split numbers are out-of-selection.
   - [src/baseline_model.py](src/baseline_model.py) — sklearn `Pipeline`: TF-IDF (2500 features,
     English stopwords) on `text` + `StandardScaler` on the tabular/lexicon features, feeding an
     `XGBClassifier`. Reports `classification_report` + confusion matrix. This is the "TF-IDF +
@@ -107,10 +110,16 @@ Build a comparison of text-mining approaches, not a single classifier:
 4. **Topic modeling (LDA/NMF)** — ✅ `src/topic_model.py`. Course technique #2.
 
 ### Topic-modeling findings so far (results/topic_model_*.csv)
-- Selection by coherence alone is unreliable here: NPMI rises monotonically with K, so it
-  always picks the largest K offered. NMF at K∈{2,3,4} is degenerate (one topic holds
-  84–95% of documents). The code therefore excludes degenerate fits and reports both the
-  coherence-selected and validation-selected K.
+- **Intrinsic coherence and extrinsic validation independently agree on K=4 for LDA:**
+  NPMI coherence peaks at K=4 (+0.106) — the same K that maximises NMI-above-null
+  against the LLM hazard types. (An earlier version reported NPMI rising monotonically
+  with K; that was an artifact of a bool-matmul bug in the co-occurrence counts, fixed
+  2026-07-27 — all persisted coherence values are now positive and non-monotonic.)
+- Coherence still cannot be trusted *alone*: NMF's highest coherence is at K=2, a
+  degenerate fit where one topic holds 95% of documents (NMF K∈{2,3,4,5} all have a
+  topic holding >60%). The code excludes degenerate fits first and reports both the
+  coherence-selected and validation-selected K when they disagree (for NMF: coherence
+  picks K=8 among healthy fits, validation picks K=6).
 - Selected: **LDA K=4** and **NMF K=6**.
 - Recovery of the known hazard types is **weak**: purity 0.716 vs a 0.690 majority-class
   baseline; NMI 0.10–0.12 against a shuffle null of 0.006–0.014.

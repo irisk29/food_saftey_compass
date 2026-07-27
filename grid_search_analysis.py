@@ -77,7 +77,9 @@ def main():
     print(f"  weights:  {weights}")
     print(f"  total runs: {len(variants) * len(weights)}\n")
 
-    train_df, test_df = load_and_split_data()
+    # The grid compares loss configurations — a selection activity — so it scores
+    # the validation split. The test split stays reserved for the final report.
+    train_df, val_df, test_df = load_and_split_data(with_validation=True)
     os.makedirs(cfg.RESULTS_DIR, exist_ok=True)
 
     results = []
@@ -88,6 +90,7 @@ def main():
             trainer = run_sota_training(
                 train_df=train_df,
                 test_df=test_df,
+                eval_df=val_df,
                 epochs=args.epochs,
                 lr=LR,
                 batch_size=BATCH_SIZE,
@@ -95,7 +98,7 @@ def main():
                 loss_variant=variant,
             )
 
-            m = trainer.evaluate()
+            m = trainer.evaluate()  # scores the validation split (eval_df)
             row = {
                 "variant": variant,
                 "weight": w,

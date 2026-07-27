@@ -24,8 +24,10 @@ def main():
 
     os.makedirs(cfg.RESULTS_DIR, exist_ok=True)
 
-    # Load and partition dataset
-    train_df, test_df = load_and_split_data()
+    # Load and partition dataset. The validation split is what checkpoint selection
+    # and the Optuna objective see; the test split is never consulted during the
+    # sweep, so its numbers stay honest for the final report.
+    train_df, val_df, test_df = load_and_split_data(with_validation=True)
 
     # 1. Train and evaluate your traditional XGBoost baseline
     train_and_evaluate_baseline(train_df, test_df)
@@ -53,11 +55,14 @@ def main():
             trainer = run_sota_training(
                 train_df=train_df,
                 test_df=test_df,
+                eval_df=val_df,
                 epochs=4,
                 lr=suggested_lr,
                 batch_size=suggested_batch,
             )
 
+            # Scores the validation split (eval_df), not test — the objective must
+            # never see the reporting split.
             eval_metrics = trainer.evaluate()
 
             # PR-AUC, not recall. Recall alone is maximised by flagging every review —

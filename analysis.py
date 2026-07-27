@@ -62,7 +62,10 @@ def main():
     # -------------------------------------------------------------------------
     # 1. Models
     # -------------------------------------------------------------------------
-    train_df, test_df = load_and_split_data()
+    # Three-way split: checkpoint selection sees only the validation split, so the
+    # test-split numbers reported below are out-of-selection (the gold holdout was
+    # already out-of-everything). Same test split as the historical two-way split.
+    train_df, val_df, test_df = load_and_split_data(with_validation=True)
     lr, batch_size = _load_best_hyperparameters()
 
     baseline_pipeline = train_and_evaluate_baseline(train_df, test_df)
@@ -70,6 +73,7 @@ def main():
     trainer, tokenizer, test_tokenized = run_sota_training(
         train_df=train_df,
         test_df=test_df,
+        eval_df=val_df,
         epochs=DEFAULT_EPOCHS,
         lr=lr,
         batch_size=batch_size,

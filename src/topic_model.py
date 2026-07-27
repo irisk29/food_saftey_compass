@@ -177,7 +177,9 @@ def fit_one(texts, k, algo, count_vec, tfidf_vec, X_count, X_tfidf, random_state
         )
         doc_topic = model.fit_transform(X_count)
         features = count_vec.get_feature_names_out()
-        coherence_matrix = (X_count > 0)
+        # int cast is load-bearing: on a boolean sparse matrix, cols.T @ cols
+        # saturates every co-occurrence count at 1, which silently corrupts NPMI.
+        coherence_matrix = (X_count > 0).astype(np.int32)
     else:
         model = NMF(
             n_components=k, random_state=random_state,
@@ -187,7 +189,8 @@ def fit_one(texts, k, algo, count_vec, tfidf_vec, X_count, X_tfidf, random_state
         features = tfidf_vec.get_feature_names_out()
         # Coherence is always measured on the count matrix so LDA and NMF are
         # scored on the same footing; vocabularies are shared by construction.
-        coherence_matrix = (X_count > 0)
+        # Same int cast as the LDA branch — boolean matmul saturates at 1.
+        coherence_matrix = (X_count > 0).astype(np.int32)
 
     tw = top_words(model, features)
     coherences = [npmi_coherence(t["indices"], coherence_matrix) for t in tw]
@@ -283,12 +286,12 @@ def run_topic_modeling(k_values=DEFAULT_K_VALUES, output_dir=None, algos=("lda",
     sweep.to_csv(os.path.join(output_dir, "topic_model_sweep.csv"), index=False)
 
     # ---- Winner per algorithm ---------------------------------------------
-    # NPMI coherence tends to rise monotonically with K, so selecting on it alone
-    # just picks the largest K on offer. Degenerate fits (one topic swallowing most
-    # of the corpus) are excluded first, and the coherence-selected and
-    # validation-selected winners are both reported when they disagree — that
-    # disagreement is itself evidence about how far unsupervised coherence can be
-    # trusted as a model-selection criterion.
+    # Coherence alone cannot be trusted as the selection criterion: NMF's highest
+    # coherence sits at K=2, a degenerate fit where one topic holds 95% of the
+    # corpus (few tight topics are "coherent" even when they carry no structure).
+    # Degenerate fits (one topic swallowing most of the corpus) are excluded first,
+    # and the coherence-selected and validation-selected winners are both reported
+    # when they disagree — for LDA they agree on K=4, which is itself a finding.
     detail_frames, crosstabs, lift_frames = [], {}, []
     for algo in algos:
         grp = sweep[sweep.algorithm == algo.upper()]
