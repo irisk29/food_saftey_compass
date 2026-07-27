@@ -110,25 +110,30 @@ Build a comparison of text-mining approaches, not a single classifier:
 4. **Topic modeling (LDA/NMF)** — ✅ `src/topic_model.py`. Course technique #2.
 
 ### Topic-modeling findings so far (results/topic_model_*.csv)
-- **Intrinsic coherence and extrinsic validation independently agree on K=4 for LDA:**
-  NPMI coherence peaks at K=4 (+0.106) — the same K that maximises NMI-above-null
-  against the LLM hazard types. (An earlier version reported NPMI rising monotonically
-  with K; that was an artifact of a bool-matmul bug in the co-occurrence counts, fixed
-  2026-07-27 — all persisted coherence values are now positive and non-monotonic.)
-- Coherence still cannot be trusted *alone*: NMF's highest coherence is at K=2, a
-  degenerate fit where one topic holds 95% of documents (NMF K∈{2,3,4,5} all have a
-  topic holding >60%). The code excludes degenerate fits first and reports both the
-  coherence-selected and validation-selected K when they disagree (for NMF: coherence
-  picks K=8 among healthy fits, validation picks K=6).
-- Selected: **LDA K=4** and **NMF K=6**.
-- Recovery of the known hazard types is **weak**: purity 0.716 vs a 0.690 majority-class
-  baseline; NMI 0.10–0.12 against a shuffle null of 0.006–0.014.
-- But the **lift analysis is the real result**: both models isolate a coherent
-  allergen/gluten topic — NMF topic 1 (`gluten, celiac, cross contamination, gf`) has
-  **lift 5.28** for `allergic_reaction`, LDA topic 0 has lift 4.18. What the models cannot
-  do is subdivide the dominant `food_poisoning` mass (69% of the validated set).
-  Report this as "the technique finds the rare, lexically-distinct hazard type and fails
-  on the common, lexically-diffuse one" — that is the *why* the rubric rewards.
+All numbers below are from the committed artifacts (regenerated 2026-07-27 after the
+NPMI bool-matmul fix — the earlier all-negative, monotonically-rising coherence values
+were an artifact of that bug and are void).
+- **Coherence cannot be trusted alone.** NMF's highest coherence is at K=2, a degenerate
+  fit where one topic holds 95% of documents (NMF K∈{2,3,4,5} all have a topic holding
+  >60%). The code excludes degenerate fits first and reports both the coherence-selected
+  and validation-selected K when they disagree (NMF: coherence picks K=8 among healthy
+  fits, validation picks K=6; LDA: coherence peaks at K=8, validation at K=4).
+- **External validation is the stable selection criterion**: `nmi_above_null` picks
+  **LDA K=4** and **NMF K=6** — the reported models.
+- **Reproducibility caveat (LDA only):** with identical code, data, and seed, LDA fits
+  differ across machines/library versions — a second environment produced different
+  topics at K=4 (allergen lift 4.18 vs 2.52, purity 0.716 vs 0.690). NMF (deterministic
+  `nndsvda` init) reproduces exactly. Quote NMF numbers as headline results; quote LDA
+  numbers only from the committed artifacts, and say they are environment-sensitive.
+- Recovery of the known hazard types is **weak**: LDA K=4 purity 0.690 (exactly the
+  majority-class baseline), NMF K=6 purity 0.697; NMI 0.09–0.12 against a shuffle null
+  of 0.006–0.014.
+- But the **lift analysis is the real result**: NMF topic 1 (`gluten, celiac, cross
+  contamination, gf` — per-topic NPMI +0.43, by far the most coherent topic found) has
+  **lift 5.28** for `allergic_reaction`. What the models cannot do is subdivide the
+  dominant `food_poisoning` mass (69% of the validated set). Report this as "the
+  technique finds the rare, lexically-distinct hazard type and fails on the common,
+  lexically-diffuse one" — that is the *why* the rubric rewards.
 
 ## Working notes
 - Large data files are gitignored; raw Yelp JSON is not committed.
