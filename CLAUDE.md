@@ -94,7 +94,11 @@ techniques work/fail, tied to the business problem = 90–100.
   - `labeling/gold_dataset_holdout.csv` — sampled from `build_holdout_pool.py` output, which is
     verified to have **zero overlap** with the enriched dataset. This is the set to report on.
 - Selection metrics are now F2 (checkpoint) and PR-AUC (hyperparameter search); bare recall was
-  removed after the all-positive collapse was confirmed at w=50.
+  removed because an all-positive model maximises it by definition (regression-guarded in
+  `tests/test_losses.py`). The all-positive collapse was observed historically under the
+  label-keyed `pos_weight` loss but was never written to an artifact, and the deployed
+  `focal_asymmetric` model at w=50 does *not* collapse (test-split flag rate 0.207) — so the
+  collapse should be described as an un-persisted observation, not quoted as a measurement.
 - The heuristic's 97.9% recall is measured *inside* an already keyword-filtered dataset, so it
   is circular and optimistic. The holdout set gives the honest estimate.
 
@@ -108,6 +112,31 @@ Build a comparison of text-mining approaches, not a single classifier:
 3. **Fine-tuned transformer** — ✅ DeBERTa-v3-base (`src/sota_model.py`), asymmetric loss
    + lowered threshold, Optuna-tuned on PR-AUC. Course technique #1.
 4. **Topic modeling (LDA/NMF)** — ✅ `src/topic_model.py`. Course technique #2.
+
+### Loss-variant grid findings (results/grid_search_loss_variants.csv)
+The signature contribution is the `AsymmetricSafetyLoss`, so it needs a head-to-head. As of
+2026-07-27 the committed grid has **4 rows only**: `{pos_weight, focal_asymmetric}` x `{w=1.0,
+w=15.0}`, scored on the validation split against the heuristic keyword label.
+- **The metric is saturated.** PR-AUC spans 0.9818–0.9882 across all four — a spread of 0.0065,
+  well inside single-seed noise. Reproducing a keyword+stars rule is an easy problem, so every
+  configuration sits at ceiling and the table cannot rank them. For contrast, the same
+  architecture scores PR-AUC 0.804 on the gold LLM holdout (XGBoost baseline: 0.728) — that is
+  where models actually differ.
+- **The unweighted control currently leads.** Best PR-AUC is `pos_weight @ w=1.0` (0.9882), i.e.
+  no asymmetric weighting at all; best F2 is `pos_weight @ w=15.0` (0.9307). Given the spread,
+  the honest statement today is that **the custom loss has no demonstrated benefit** over the
+  control. Say this in the write-up rather than around it — the rubric rewards knowing why a
+  technique fails, and "the comparison was run and did not separate" is a real finding.
+- **The deployed configuration was never in the grid.** Every headline number comes from
+  `focal_asymmetric, w=50, gamma=2.0` (`results/analysis_run.log:63`); w=50 and the `fn_gated`
+  variant have not been run at all. `grid_search_analysis.py` now force-includes the deployed
+  config (`--no-force-deployed` opts out) and resumes rather than redoing the 4 finished cells.
+- **Gold-holdout scoring added** to make the comparison meaningful: every cell is now also
+  scored on the fresh LLM-labelled holdout (`gold_*` columns) and the summary sorts on
+  `gold_pr_auc`, falling back to validation PR-AUC only when the gold set is absent. The 4
+  existing rows have blank gold cells — **not measured, not zero** — until they are re-run.
+- No collapse anywhere in the committed evidence: `collapsed` is False in all 4 rows and the
+  max flag rate is 0.198.
 
 ### Topic-modeling findings so far (results/topic_model_*.csv)
 All numbers below are from the committed artifacts (regenerated 2026-07-27 after the

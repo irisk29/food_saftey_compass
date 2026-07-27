@@ -76,8 +76,13 @@ FN_GATE_TAU = DECISION_THRESHOLD    # fn_gated only; gate at the deployed thresh
 # Both are computed and logged every eval, and main.py records which checkpoint each
 # would have chosen so the disagreement can be reported.
 # Neither can be gamed by an all-positive model, unlike the plain `recall` this
-# replaced — that degenerate solution was actually observed (100% recall / 37.5%
-# precision at weight=50; see grid_search_analysis.py).
+# replaced — that is why recall was dropped as a selection metric, and
+# tests/test_losses.py keeps a regression guard on it. The collapse itself was an
+# un-persisted historical observation under the label-keyed `pos_weight` formulation
+# selected on bare recall; no committed artifact demonstrates it, so it is not quoted
+# as a measurement. The current focal_asymmetric loss at this same weight does NOT
+# collapse (test-split flag rate 0.207), plausibly because its penalty decays as
+# confidence rises. Pending: w=50 in grid_search_analysis.py, which has never been run.
 CHECKPOINT_METRIC = "f2"        # HuggingFace metric_for_best_model (without 'eval_' prefix)
 HPO_METRIC = "pr_auc"           # Optuna objective
 FBETA = 2.0                     # beta for the F-beta metric; 2.0 weights recall 2x precision

@@ -65,9 +65,13 @@ def main():
             # never see the reporting split.
             eval_metrics = trainer.evaluate()
 
-            # PR-AUC, not recall. Recall alone is maximised by flagging every review —
-            # a degenerate solution this project has actually produced (100% recall /
-            # 37.5% precision at weight=50). PR-AUC is also threshold-free, so the
+            # PR-AUC, not recall. Recall alone is maximised by flagging every review,
+            # so it cannot be a selection metric regardless of whether any particular
+            # run degenerates — an all-positive model is unfalsifiable under it.
+            # (A collapse was observed historically under the label-keyed pos_weight
+            # loss, but it was never persisted to an artifact and the current
+            # focal_asymmetric loss at the deployed weight does not collapse, so no
+            # figures are quoted for it here.) PR-AUC is also threshold-free, so the
             # hyperparameter search stays independent of our 0.20 operating point.
             target_score = eval_metrics[f"eval_{cfg.HPO_METRIC}"]
 

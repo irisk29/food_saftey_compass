@@ -52,8 +52,12 @@ def compute_metrics(eval_pred):
     Metrics at the deployed threshold, plus threshold-free PR-AUC.
 
     `pred_positive_rate` is reported deliberately: an all-positive model scores
-    perfect recall, and we have observed exactly that at weight=50. Seeing the rate
-    sit at 1.0 makes the degenerate solution obvious instead of flattering.
+    perfect recall, so the rate is the cheapest way to make that degenerate solution
+    visible instead of flattering. It is logged every eval rather than only when
+    trouble is suspected — the deployed focal_asymmetric configuration does not
+    collapse (test-split flag rate 0.207), and the collapse seen historically under
+    the label-keyed pos_weight loss was never persisted to an artifact, so this column
+    is the evidence rather than the recollection.
     """
     logits, labels = eval_pred
     probs = 1 / (1 + np.exp(-np.asarray(logits).flatten()))

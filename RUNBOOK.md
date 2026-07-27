@@ -1,250 +1,267 @@
-# Runbook — final training and evaluation on the MacBook
+# Runbook — what to do now
 
-Written for the state as of 2026-07-26: all code changes are done and smoke-tested, the
-holdout pool is built, and the LLM labelling of the holdout set is finishing on the
-Windows machine. What remains is the GPU work.
+Rewritten **2026-07-27 (evening)**, after the stage-4 and stage-5 runs. The original
+version of this file was a pre-execution guide; every GPU step in it has now been run,
+so this is a fresh plan for the time that is left.
 
-Deadline: **2026-08-02 midnight**, presentations 2026-08-03.
+**Deadline: 2026-08-02 midnight. Presentations: 2026-08-03. You have ~6 days.**
 
----
-
-## Step 0 — Before you leave the Windows machine
-
-The holdout gold set is being produced **on Windows**. It has to reach the MacBook.
-
-**0a. Wait for the labelling to finish.** Check progress:
-
-```bash
-python -c "import pandas as pd; d=pd.read_csv('labeling/gold_dataset_holdout.csv'); print(len(d), 'rows,', f'{d.llm_is_hazard.mean():.1%} hazard rate')"
-```
-
-Target is 800 rows. If the process died, **re-run the exact same command** — it resumes
-from what is already on disk and never re-labels a row:
-
-```bash
-python labeling/create_gold_dataset.py --source labeling/holdout_candidate_pool.csv --n 800
-```
-
-If you run short on time or API quota, **anything above ~500 rows is enough to report on**.
-Below 300 the preflight check will block you, because the confidence intervals get too
-wide to say anything.
-
-**0b. Commit and push both new data files.** Neither is gitignored and both are small.
-
-```bash
-git add labeling/holdout_candidate_pool.csv labeling/gold_dataset_holdout.csv
-git add src/ analysis/ tests/ config/ main.py analysis.py grid_search_analysis.py \
-        verify_setup.py CLAUDE.md IMPLEMENTATION_NOTES.md PROFESSOR_REVIEW_V2.md RUNBOOK.md
-git commit -m "Add fresh holdout gold set, loss variants, topic modeling, error analysis"
-git push
-```
-
-You do **not** need the 5.3 GB raw Yelp JSON on the MacBook. Every step below reads only
-the committed CSVs.
+The headline: **the modelling is essentially done and the results are good.** What is
+left is one unattended GPU run, a presentation that does not exist yet, and a pass of
+corrections. Nothing on the critical path requires new research.
 
 ---
 
-## Step 1 — Environment on the MacBook
+## Where the project actually stands
 
-```bash
-git pull
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-```
+| Piece | State |
+|---|---|
+| Holdout gold set | ✅ 772 rows, 355 hazard (46.0% within the keyword funnel), 767 high-confidence, committed |
+| Topic modelling | ✅ Run and committed; NPMI bug fixed. One caveat — see Step 4 |
+| Final evaluation (`analysis.py`) | ✅ Run 2026-07-27; every performance artifact exists |
+| Model error analysis | ✅ Both ground truths, bucketed |
+| Loss-variant grid | ⚠️ Partially run — 4 of the cells that matter are missing (Step 1) |
+| Optuna sweep (`main.py`) | ❌ Never run under the fixed config (Step 6 — optional) |
+| **Presentation** | ❌ **Skeleton only. 15% of the grade, and the largest remaining risk** |
+| README | ❌ Still one line |
+| `requirements.txt` / W&B | ❌ Still cannot reproduce from a clean clone (Step 7) |
 
-Then install the three packages `requirements.txt` is missing. **`sentencepiece` is not
-optional** — `AutoTokenizer.from_pretrained(..., use_fast=False)` fails without it, and
-it fails *after* the model download, several minutes into a run:
+Your results, for reference while you build slides — all verified against the committed
+CSVs:
 
-```bash
-pip install sentencepiece matplotlib seaborn
-python -c "import nltk; nltk.download('vader_lexicon')"
-```
+| | vs heuristic label | vs gold holdout | delta |
+|---|---:|---:|---:|
+| XGBoost baseline — PR-AUC | 0.979 | 0.728 | **−0.251** |
+| DeBERTa-v3 — PR-AUC | 0.987 | 0.804 | **−0.183** |
+| DeBERTa @0.20 — recall | 0.947 | 0.890 | −0.057 |
 
-Consider adding those three to `requirements.txt` while you are there, so the grader can
-reproduce the project from a clean clone.
+DeBERTa on the holdout: 39 missed hazards vs the baseline's 116, and a total risk cost of
+$204,850 vs $585,300 — **2.9× lower**.
 
-**Weights & Biases.** `main.py` calls `wandb.login()`, and the Trainer is configured with
-`report_to="wandb"`. If you do not want to deal with it, disable it for the session —
-nothing in the results depends on W&B, since everything is now written to `results/`:
+---
+
+## Step 1 — Finish the loss grid (start this TONIGHT, unattended)
+
+This is the only remaining GPU work, and it is the only item that is both blocking and
+slow, so it goes first — start it before you do anything else, then work on slides while
+it runs.
+
+**Why it needs re-running.** The four cells you have are scored only against the
+heuristic label on the validation split, where every configuration sits at ceiling:
+PR-AUC spans 0.9818–0.9882, a spread of 0.0065, which is single-seed noise. The grid as it
+stands cannot rank the variants. Two further gaps: **w=50 was never tested**, and w=50 is
+the configuration every headline number in your project came from
+(`focal_asymmetric, w=50, gamma=2.0`). So the deployed config was compared against nothing.
+
+`grid_search_analysis.py` now scores every cell on the **gold holdout** as well
+(`gold_*` columns), where models actually differ, and it resumes — the 4 finished cells
+are skipped, not re-paid for.
 
 ```bash
 export WANDB_MODE=offline
+python grid_search_analysis.py --quick 2>&1 | tee -a results/grid_search.log
+```
+
+That runs exactly **4 new fine-tunes**: `pos_weight @ {5, 50}` and
+`focal_asymmetric @ {5, 50}`. Budget an overnight. It gives you a clean 2×2 on the gold
+holdout (two variants × two penalties) plus answers to both open questions:
+
+- Does `pos_weight @ w=50` actually collapse? Your docs used to assert it did; no artifact
+  ever showed it, and the deployed focal model at the same weight does **not** (flag rate
+  0.207). Watch the `collapsed` and `gold_collapsed` columns.
+- Does the asymmetric loss beat the unweighted control *where it matters*? On the
+  heuristic label it does not — the best PR-AUC in the current grid is `pos_weight @ w=1`,
+  i.e. no asymmetry at all.
+
+**Note the existing 4 rows will keep blank `gold_*` cells** — that means *not measured*,
+not zero. If you have a second free night and want the full gold table, re-run everything
+with `--force --quick` (8 fine-tunes). If you are badly short on time, the minimum viable
+version is `--weights 50` (2 runs), which still covers the deployed config.
+
+**If the result is "no variant wins," report that.** "We ran the comparison and it did not
+separate, and here is why the metric was saturated" is a genuine finding, and the rubric
+rewards understanding why a technique fails. Do not quietly drop the experiment.
+
+---
+
+## Step 2 — Build the presentation (start today, in parallel with Step 1)
+
+**This is now the biggest risk in the project.** 15% of the grade, presentations are the
+day after the deadline, and only `slides/SLIDES_SKELETON.md` exists. The skeleton is good
+— it has the spine, per-slide evidence lines, and timing — but it is not a deck.
+
+Nothing in it is blocked on data any more. **Correct these numbers as you build:**
+
+- Holdout is **772 rows / 355 hazards**, not 744/342.
+- Base rate **46.0%**, and say "within the keyword-screened funnel" out loud — the raw
+  Yelp rate is plausibly 2–5%.
+- **Topic model: lead with NMF, not LDA.** The skeleton quotes purity 0.716 and LDA lift
+  4.18; those came from a run whose artifacts no longer exist (see Step 4). Use NMF K=6,
+  allergen lift **5.28**, per-topic NPMI **+0.43** — reproducible and the stronger result.
+- Use the real classifier numbers from the table above, not the smoke-test figures.
+
+The spine still holds, and it is a strong one: *we built a hazard detector, then spent the
+project proving our own ground truth wrong — twice — before trusting a single number.*
+
+---
+
+## Step 3 — README (1–2 hours)
+
+Still one line. It is the grader's first impression and the content already exists in
+`CLAUDE.md` and `IMPLEMENTATION_NOTES.md`. One page: the problem, the cost asymmetry, the
+two-ground-truths design, the headline table above, and an index of what lives in
+`results/`.
+
+---
+
+## Step 4 — Corrections pass (1 hour, pure Q&A insurance)
+
+Each of these is a question you can take away from a grader for free.
+
+- **LDA is not reproducible across machines.** Re-running the fixed topic sweep in a
+  second environment with the same seed produced different LDA fits (allergen lift 4.18 vs
+  the committed 2.52; purity 0.716 vs 0.690; coherence peak K=4 vs K=8). NMF reproduced
+  exactly. Quote LDA numbers only from the committed artifacts, lead with NMF, and put one
+  sentence in the write-up owning it — "we caught our own topic model being irreproducible
+  and moved the headline claims to the algorithm that reproduces" reads as rigour, not
+  weakness. Do **not** re-run the topic model expecting the old numbers back.
+- **Hyperparameter provenance.** No `optuna_trials.csv` or `best_hyperparameters.json`
+  exists, so `analysis.py` fell back to its hardcoded `lr=1.814e-05, bs=16` — values from
+  a sweep run *before* the metric fixes and the validation split. The results are clean
+  (evaluation never touched selection data); only the provenance is impure. Either run
+  Step 6 or add one sentence: *"hyperparameters were carried over from an earlier sweep;
+  the final configuration was re-trained and evaluated under the fixed protocol."*
+- **Funnel wording.** `src/data_pipeline.py:86` still prints "hazard base rate" — say
+  "hazard rate within the keyword-screened funnel."
+- Test-split numbers no longer need an "in-selection" footnote: checkpoint selection ran
+  on the validation split, so they are out-of-selection. Say so.
+
+---
+
+## Step 5 — Error analysis polish (1–2 hours, no GPU)
+
+- **`NEGATED_HAZARD` still omits `haven't/hasn't/hadn't`** (`analysis/error_analysis.py:38`),
+  so the committed error-analysis files were generated with a known-flawed regex. Fix it
+  and re-run `analyze_errors` — the detail CSVs already carry the probabilities, so no
+  retraining is needed.
+- **23 of 39 gold false negatives are `unexplained_fn`** (59%). Hand-read those 23 in
+  `results/error_analysis_deberta_gold_llm_label_fresh_holdout_detail.csv`; several
+  visible examples state the hazard in the review's last sentence, which is consistent
+  with the 256-token truncation. Turning "59% unexplained" into a named failure mode is an
+  80s→90s discriminator.
+- The FP story is already excellent and should be a slide: **66% of the model's gold false
+  positives are the labelling rule's own two top failure modes** (34%
+  `illness_mentioned_not_caused_here` + 32% `neutral_allergen_mention`). The model
+  inherited its teacher's blind spots. Best single example in the file — a review
+  *praising* a shop's cross-contamination prevention, flagged at p=0.995.
+
+---
+
+## Step 6 — Optuna sweep (optional; only if Steps 1–5 are done)
+
+`python main.py` runs 3 trials at 4 epochs — **8–12 hours**. It buys you honest
+hyperparameter provenance (Step 4) and the PR-AUC-vs-F2 selection comparison across
+trials. It is a nice-to-have. If you run it, `analysis.py` would then need re-running to
+pick up `best_hyperparameters.json`, which is another 2–3 hours — so realistically this is
+only worth it if you have a completely free day. **The one-sentence disclosure is the
+better trade.**
+
+---
+
+## Step 7 — Repository hygiene (1 hour total, do before submitting)
+
+- **`requirements.txt` is still broken.** Missing `sentencepiece` (hard crash at tokenizer
+  load), `matplotlib`, `seaborn`, `accelerate`. It also pins `transformers==4.40.0` and
+  `torch==2.2.2`, which nobody in this project runs. A grader cloning the repo cannot
+  reproduce anything. Fix the file rather than documenting the workaround.
+- **W&B is a hard dependency**: `report_to="wandb"` is hardcoded in
+  `src/sota_model.py:187`. Either set `report_to=os.getenv("REPORT_TO", "none")` or
+  document `export WANDB_MODE=offline` prominently.
+- **Three defective holdout rows**: one exact duplicate-text pair and one
+  self-contradictory row (`llm_is_hazard=1` with `hazard_type="none"`, low confidence,
+  benign rationale). Dropping 3 of 772 changes nothing statistically — drop them or add a
+  footnote.
+- **Archive the review files.** There are now four `PROFESSOR_REVIEW*.md` plus
+  `final_work_overview.md` in the repo root. Self-reviews quoting grade estimates invite
+  anchoring. Move them to an `archive/` directory or delete them before submission.
+  (`final_work_overview.md:31` also still claims the w=50 collapse was confirmed, which
+  the evidence no longer supports.)
+- **Add the instructor and Tal as collaborators** — this is a submission requirement.
+
+---
+
+## Step 8 — Commit
+
+`results/` is not gitignored; `model_outputs/` is (leave the checkpoints out).
+
+```bash
+git add results/ slides/ README.md
+git commit -m "Add loss-variant gold scoring, presentation, README"
+git push
 ```
 
 ---
 
-## Step 2 — Preflight (30 seconds, do not skip)
+## Reference — if something breaks
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `ImportError` / tokenizer conversion error at startup | `sentencepiece` missing | `pip install sentencepiece` |
+| `TrainingArguments` refuses to construct | `accelerate` missing | `pip install accelerate` |
+| MPS out of memory | `deberta-v3-base` at seq 256 on 8 GB | Lower `max_length` to 192 in `tokenize_split`, or pass `batch_size=8` |
+| `RuntimeError: ... 'square_i64' ... MPS` | label dtype | Already handled (float32 labels); if it reappears, `PYTORCH_ENABLE_MPS_FALLBACK=1` |
+| `nan` loss after a few steps | fp16 on MPS | `fp16=False` is already set; check the learning rate is not above 5e-5 |
+| Training absurdly slow | fell back to CPU | Preflight `[2] Compute device` must say `mps`, not `cpu` |
+| wandb prompts for a login | `report_to="wandb"` | `export WANDB_MODE=offline` |
+| `Flag Rate` ≈ 100% in a grid cell | that configuration collapsed to all-positive | **Keep the output — it is evidence.** This is exactly what Step 1 is testing for at w=50. Do not "fix" it by lowering the weight; record it |
+
+`grid_search_analysis.py` is now resumable — it writes incrementally *and* skips completed
+`(variant, weight)` cells on restart, so an interrupted sweep costs you nothing. `analysis.py`
+still restarts from scratch.
+
+Preflight is still worth 30 seconds before any long run:
 
 ```bash
 python verify_setup.py
 ```
 
-It checks dependencies, the vader lexicon, MPS availability, all three data files, that
-the gold holdout has **zero text overlap** with training data, that `src/features.py`
-still reproduces the notebook's features exactly, that the selection metrics are not bare
-recall, and that the 9 unit tests pass.
-
-Fix anything marked `[FAIL]` before continuing. `[warn]` lines are safe to ignore.
-
 ---
 
-## Step 3 — Topic modeling (2 minutes, CPU only)
+## What to report
 
-Do this first: it is fast, it needs no GPU, and it secures your second course technique.
+Build the results section around these five, in this order:
 
-```bash
-python -c "from src.topic_model import run_topic_modeling; run_topic_modeling()"
-```
+1. **The ground-truth delta** (`results/ground_truth_comparison.csv`) — the baseline
+   collapses from PR-AUC 0.979 to 0.728 on real ground truth, a −0.251 drop, while DeBERTa
+   drops −0.183. **This is the headline**: most of the baseline's original score was
+   fidelity to a flawed keyword proxy, not hazard-detection skill. TF-IDF trivially
+   recovers a keyword rule; that is now demonstrated, not asserted.
+2. **PR-AUC on the gold holdout**, baseline 0.728 vs DeBERTa 0.804 — plus the deployment
+   framing: 39 missed hazards vs 116, risk cost 2.9× lower. Lead with PR-AUC (threshold-free,
+   so the two models' different class weighting cannot distort it).
+3. **Label quality** (`label_quality.json`): 85.8% agreement, heuristic precision 73.2%,
+   and the one-sidedness — 201 over-flags against 12 misses.
+4. **The two error taxonomies together.** The rule over-flags because a keyword cannot
+   represent causation (48% `illness_mentioned_not_caused_here`), and the *model* inherits
+   exactly that blind spot (66% of its gold false positives are the rule's own top two
+   modes). Tracing model errors back to label pathology is the strongest analytical move
+   in the project.
+5. **The topic-model lift table** — NMF isolates the rare, lexically-distinct allergen type
+   (lift 5.28, the most coherent topic found at NPMI +0.43) and cannot subdivide the
+   dominant food-poisoning mass. Say *why*, and a null result becomes a finding.
 
-**Produces:** `results/topic_model_sweep.csv`, `topic_model_topics.csv`,
-`topic_model_type_lift.csv`, `topic_model_crosstabs.txt`, `topic_model_selection.png`.
+State these caveats yourself rather than letting a grader find them:
 
-Results are already known from the Windows run and should reproduce exactly
-(`random_state=42`): LDA K=4 and NMF K=6 selected, purity 0.716 against a 0.690
-majority-class baseline, and the allergen topic at lift 5.28. Re-run it on the Mac anyway
-so the committed artifacts come from one machine.
+- The 46.0% holdout hazard rate is **within the keyword-screened funnel**, not the Yelp
+  population rate (~2–5%).
+- The heuristic's 97.9% recall is measured **inside its own keyword filter** — circular
+  and optimistic.
+- **LDA topic results are environment-sensitive**; NMF is not, which is why NMF leads.
+- The loss-variant comparison **did not separate the variants** on the saturated heuristic
+  metric — which is why it was re-scored on the gold holdout.
+- Topic-model K was selected by NMI against the LLM types and the same NMI is reported as
+  validation; and ~27% of the fit corpus is LLM-benign, which is visible as the
+  service-complaint topics.
 
----
-
-## Step 4 — Final evaluation run (the important one)
-
-**This is the single run you cannot skip.** It trains both models and produces every
-number in your results section, under both ground truths.
-
-```bash
-python analysis.py 2>&1 | tee results/analysis_run.log
-```
-
-**Estimated 2–3 hours** on an M1/M2 Pro (one 3-epoch DeBERTa fine-tune on 6,000 reviews
-at `max_length=256`, plus inference on the test split and the gold holdout). On a base M1
-with 8 GB it may be closer to 4–5 hours — see the memory note in Step 7.
-
-**Produces:**
-
-| File | What it is |
-|---|---|
-| `results/label_quality.json` | heuristic vs LLM agreement (85.8%, precision 73.2%) |
-| `results/error_analysis_heuristic_label.md` | why the labelling rule errs, bucketed |
-| `results/performance_heuristic_label_test_split.csv` | metrics vs the heuristic label |
-| `results/performance_gold_llm_label_fresh_holdout.csv` | **metrics vs gold — the headline** |
-| `results/ground_truth_comparison.csv` | the delta between the two |
-| `results/error_analysis_deberta_*.md` | model failure modes, bucketed |
-| `results/pr_curve_*.png`, `cost_curve_*.png` | figures for the slides |
-| `results/checkpoint_selection.json` | whether F2 and PR-AUC picked the same epoch |
-
-Watch the **`Flag Rate`** column in the printed tables. If it reads 100%, the model has
-collapsed to predicting hazard for everything — see Step 7.
-
----
-
-## Step 5 — Loss-variant comparison (overnight)
-
-This is the variant experiment that answers "is the asymmetric loss actually doing
-anything, or is it just class weighting?"
-
-The full grid is 21 fine-tunes and would take **days**. Do not run it. Run this instead —
-4 fine-tunes at 2 epochs, roughly **4–6 hours**, which still contains the comparison that
-matters (`pos_weight` vs `focal_asymmetric`, at a low and a high penalty):
-
-```bash
-python grid_search_analysis.py \
-    --variants pos_weight focal_asymmetric \
-    --weights 1 15 \
-    --epochs 2 2>&1 | tee results/grid_search.log
-```
-
-**Produces:** `results/grid_search_loss_variants.csv`, written incrementally after every
-run — so if it dies at 3am you still keep the completed rows.
-
-`w=1` is the unweighted control; it tells you how much the asymmetry buys at all.
-
-**Skip this entirely if you are short on time.** Step 4 is worth far more.
-
----
-
-## Step 6 — Hyperparameter sweep (optional, only if time allows)
-
-`main.py` runs 3 Optuna trials at 4 epochs each — **8–12 hours**. You already have tuned
-values from a previous sweep (`lr=1.814e-05`, `batch_size=16`), which `analysis.py` uses
-by default.
-
-The one thing this adds that you do not already have is the PR-AUC-vs-F2 selection
-comparison across trials. That is a nice-to-have, not a requirement.
-
-```bash
-python main.py 2>&1 | tee results/sweep.log
-```
-
-If you run it, run it **before** Step 4 — `analysis.py` will then pick up
-`results/best_hyperparameters.json` automatically instead of the hardcoded defaults.
-
----
-
-## Step 7 — If something breaks
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| `ImportError` / tokenizer conversion error at startup | `sentencepiece` missing | `pip install sentencepiece` |
-| `TypeError: __init__() got an unexpected keyword argument 'eval_strategy'` | shouldn't happen — the code detects this — but if it does, transformers is very old | `pip install -U transformers` |
-| MPS out of memory | `deberta-v3-base` at seq 256 on 8 GB | Lower `max_length` to 192 in `tokenize_split`, or pass `batch_size=8` to `run_sota_training` |
-| `RuntimeError: ... 'square_i64' ... MPS` | label dtype | Already handled (labels cast to float32); if it reappears, run with `PYTORCH_ENABLE_MPS_FALLBACK=1` |
-| `nan` loss after a few steps | fp16 on MPS | `fp16=False` is already set; check the learning rate is not above 5e-5 |
-| Training takes absurdly long | fell back to CPU | Check preflight `[2] Compute device` says `mps`, not `cpu` |
-| **`Flag Rate` = 100%, recall = 100%, precision ≈ base rate** | the model collapsed to all-positive | Lower `ASYMMETRIC_WEIGHT` in `config/settings.py` from 50 to 10–15 and re-run. This is a real, documented failure at w=50 — if it happens, **keep the output**, it is evidence for the write-up |
-| wandb prompts for a login | `report_to="wandb"` | `export WANDB_MODE=offline` |
-
-Every long run above is safe to `tee` and safe to interrupt; only `grid_search_analysis.py`
-resumes partially (via its incremental CSV writes). `analysis.py` restarts from scratch.
-
----
-
-## Step 8 — Commit the results
-
-`results/` is not gitignored. `model_outputs/` is (checkpoints are large — leave them out).
-
-```bash
-git add results/
-git commit -m "Add final evaluation results, topic model artifacts, error analysis"
-git push
-```
-
-Then add the instructor and Tal as repository collaborators, if that is not already done.
-
----
-
-## Step 9 — What to actually report
-
-Once Step 4 finishes, the numbers you build the presentation around are:
-
-1. **`results/ground_truth_comparison.csv`** — the same model scored against the heuristic
-   label vs the independent gold label. In the smoke test the baseline dropped from
-   PR-AUC 0.986 to 0.717. If the real run shows a gap of that shape, **that is your
-   headline finding**: most of the original score was fidelity to a flawed proxy, not
-   hazard-detection skill.
-
-2. **PR-AUC on the gold holdout**, baseline vs DeBERTa. Lead with PR-AUC, not accuracy and
-   not recall — it is threshold-free, so it is not distorted by the two models' different
-   class weighting.
-
-3. **The label-quality numbers** (`label_quality.json`): 85.8% agreement, heuristic
-   precision 73.2%, and the fact that the errors are one-sided (201 over-flags vs 12
-   misses).
-
-4. **The error-analysis buckets** — especially that 48% of the labelling rule's false
-   hazards are `illness_mentioned_not_caused_here`. A keyword rule cannot represent
-   causation, only co-occurrence.
-
-5. **The topic-model lift table** — the models isolate the rare, lexically-distinct
-   allergen type (lift 5.28) and fail to subdivide the dominant food-poisoning mass. Say
-   *why*, and it becomes a strength rather than a null result.
-
-Two caveats to state out loud rather than let a grader find:
-
-- The holdout hazard base rate (~42%) is the rate **among keyword-flagged candidates**,
-  not among all Yelp reviews — the pool is pre-filtered.
-- The heuristic's 97.9% recall is measured **inside an already keyword-filtered dataset**,
-  so it is circular and optimistic.
-
-Naming your own limitations is worth more than hiding them, and both of these have a
+Naming your own limitations is worth more than hiding them, and every one of these has a
 one-sentence honest framing.
