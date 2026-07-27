@@ -1,0 +1,10 @@
+{
+  "n": 1500,
+  "agreement": 0.858,
+  "heuristic_precision": 0.732,
+  "heuristic_recall": 0.9786096256684492,
+  "heuristic_flagged_hazard_llm_says_benign": 201,
+  "heuristic_flagged_benign_llm_says_hazard": 12,
+  "both_hazard": 549,
+  "both_benign": 738
+}

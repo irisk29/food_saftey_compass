@@ -1,0 +1,8 @@
+{
+  "f2_choice_epoch": 2.0,
+  "f2_choice_value": 0.9280936454849499,
+  "pr_auc_choice_epoch": 2.0,
+  "pr_auc_choice_value": 0.9876999980631403,
+  "metrics_agree": true,
+  "epochs_logged": 3
+}
