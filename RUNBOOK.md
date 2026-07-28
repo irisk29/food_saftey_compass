@@ -20,7 +20,7 @@ corrections. Nothing on the critical path requires new research.
 | Topic modelling | ✅ Run and committed; NPMI bug fixed. One caveat — see Step 4 |
 | Final evaluation (`analysis.py`) | ✅ Run 2026-07-27; every performance artifact exists |
 | Model error analysis | ✅ Both ground truths, bucketed |
-| Loss-variant grid | ⚠️ Partially run — 4 of the cells that matter are missing (Step 1) |
+| Loss-variant grid | ✅ Run; 8 cells, 4 gold-scored. Produced the saturation finding (Step 1) |
 | Optuna sweep (`main.py`) | ❌ Never run under the fixed config (Step 6 — optional) |
 | **Presentation** | ❌ **Skeleton only. 15% of the grade, and the largest remaining risk** |
 | README | ❌ Still one line |
@@ -40,47 +40,38 @@ $204,850 vs $585,300 — **2.9× lower**.
 
 ---
 
-## Step 1 — Finish the loss grid (start this TONIGHT, unattended)
+## Step 1 — ✅ DONE: the loss grid ran (2026-07-27, commit `ca6e686`)
 
-This is the only remaining GPU work, and it is the only item that is both blocking and
-slow, so it goes first — start it before you do anything else, then work on slides while
-it runs.
+**No GPU work is required any more.** The grid now has 8 rows, 4 of them scored on the gold
+holdout, and it delivered the best methodological result in the project:
 
-**Why it needs re-running.** The four cells you have are scored only against the
-heuristic label on the validation split, where every configuration sits at ceiling:
-PR-AUC spans 0.9818–0.9882, a spread of 0.0065, which is single-seed noise. The grid as it
-stands cannot rank the variants. Two further gaps: **w=50 was never tested**, and w=50 is
-the configuration every headline number in your project came from
-(`focal_asymmetric, w=50, gamma=2.0`). So the deployed config was compared against nothing.
+| Ground truth | Configs | PR-AUC spread |
+|---|---:|---:|
+| Heuristic keyword label (validation) | 8 | **0.0075** |
+| Gold LLM label (holdout) | 4 | **0.1294** |
 
-`grid_search_analysis.py` now scores every cell on the **gold holdout** as well
-(`gold_*` columns), where models actually differ, and it resumes — the 4 finished cells
-are skipped, not re-paid for.
+The heuristic label cannot tell your models apart; the holdout can, by 17×. Two more
+results fell out: `pos_weight @ w=50` has the **best** validation PR-AUC (0.9892) and the
+**worst** gold PR-AUC (0.7203), and nothing collapsed at w=50 in either formulation — the
+old "w=50 goes all-positive" claim is now positively refuted, not merely unevidenced.
+
+See `PROFESSOR_REVIEW_V5.md` §1 for the full reading, including what the variants actually
+do (`focal_asymmetric` is ~7× less sensitive to the penalty magnitude than `pos_weight` —
+robustness, not peak performance).
+
+**Optional, only if you have a spare night after the deck and README are done.** The four
+w∈{1,15} cells were trained at **2 epochs** while the w∈{5,50} cells ran at **3**, and they
+have no gold scores. This re-runs them at 3 epochs, making all 8 rows comparable and
+completing a 4-point weight curve per variant:
 
 ```bash
 export WANDB_MODE=offline
-python grid_search_analysis.py --quick 2>&1 | tee -a results/grid_search.log
+python grid_search_analysis.py --force --weights 1 15 2>&1 | tee -a results/grid_search.log
 ```
 
-That runs exactly **4 new fine-tunes**: `pos_weight @ {5, 50}` and
-`focal_asymmetric @ {5, 50}`. Budget an overnight. It gives you a clean 2×2 on the gold
-holdout (two variants × two penalties) plus answers to both open questions:
-
-- Does `pos_weight @ w=50` actually collapse? Your docs used to assert it did; no artifact
-  ever showed it, and the deployed focal model at the same weight does **not** (flag rate
-  0.207). Watch the `collapsed` and `gold_collapsed` columns.
-- Does the asymmetric loss beat the unweighted control *where it matters*? On the
-  heuristic label it does not — the best PR-AUC in the current grid is `pos_weight @ w=1`,
-  i.e. no asymmetry at all.
-
-**Note the existing 4 rows will keep blank `gold_*` cells** — that means *not measured*,
-not zero. If you have a second free night and want the full gold table, re-run everything
-with `--force --quick` (8 fine-tunes). If you are badly short on time, the minimum viable
-version is `--weights 50` (2 runs), which still covers the deployed config.
-
-**If the result is "no variant wins," report that.** "We ran the comparison and it did not
-separate, and here is why the metric was saturated" is a genuine finding, and the rubric
-rewards understanding why a technique fails. Do not quietly drop the experiment.
+Roughly 4 unattended GPU-hours. It adds evidence, not correctness — the four gold-scored
+rows are all 3-epoch and already internally consistent, so every conclusion above stands
+without it.
 
 ---
 

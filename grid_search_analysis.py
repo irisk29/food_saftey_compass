@@ -181,6 +181,21 @@ def main():
     if skipped:
         print(f"  resuming — {len(skipped)} already in {os.path.basename(args.out)}: "
               + ", ".join(f"{v}@{w:g}" for v, w in skipped))
+        # Resume keys on (variant, weight) only, so a sweep resumed with a different
+        # --epochs silently produces a table whose rows are not comparable. This has
+        # happened once already; refuse to let it happen quietly again.
+        if prior_df is not None and "epochs" in prior_df.columns:
+            other = sorted({int(e) for e in prior_df["epochs"].dropna().unique()
+                            if int(e) != int(args.epochs)})
+            if other:
+                print(f"  [warn] the retained rows were trained for {other} epoch(s) but "
+                      f"this run uses {args.epochs}. Rows are only comparable at equal "
+                      f"epochs — re-run the older cells with --force, or compare only "
+                      f"within an epoch budget.")
+        elif prior_df is not None:
+            print(f"  [warn] the retained rows predate the `epochs` column, so their "
+                  f"training budget is unrecorded and may differ from this run's "
+                  f"({args.epochs}). Verify against the run log before comparing.")
     print(f"  to run now: {len(todo)}"
           + ("" if not todo else " — " + ", ".join(f"{v}@{w:g}" for v, w in todo)))
     print()
@@ -224,6 +239,10 @@ def main():
         row = {
             "variant": variant,
             "weight": w,
+            # Recorded per row because --epochs is a CLI override: a resumed sweep can
+            # otherwise merge cells trained under different budgets into one table that
+            # looks comparable and is not. Rows are only comparable at equal epochs.
+            "epochs": args.epochs,
             "pr_auc": m.get("eval_pr_auc"),
             "f2": m.get("eval_f2"),
             "f1": m.get("eval_f1"),
