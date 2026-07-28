@@ -1,0 +1,11 @@
+{
+  "objective_metric": "pr_auc",
+  "best_value": 0.9876948757224999,
+  "best_params": {
+    "learning_rate": 1.8346368386890366e-05,
+    "batch_size": 16
+  },
+  "loss_variant": "focal_asymmetric",
+  "asymmetric_weight": 50.0,
+  "decision_threshold": 0.2
+}
