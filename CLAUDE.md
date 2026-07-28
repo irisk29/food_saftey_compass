@@ -137,18 +137,27 @@ provenance itself.
 
 - 🔴 **The headline: trial 1 collapsed, and bare recall would have selected it.** Flag rate
   1.000, recall 1.000, precision 0.200 (exactly the validation base rate), PR-AUC 0.196 — a
-  textbook all-positive degenerate model. It never recovered; its best epoch reached PR-AUC
-  0.643 against 0.988 for the two stable trials. Ranking the three trials by each candidate
+  textbook all-positive degenerate model. Be precise about what did not recover: the *hard
+  predictions* stayed all-positive at every epoch (F2 pinned at 0.5556, the analytic all-positive
+  value at a 20% base rate), while the *ranking* partially recovered — best-epoch PR-AUC 0.643
+  against 0.988 for the two stable trials. Last either way. Ranking the three trials by each candidate
   objective: **`recall` picks the collapsed trial 1**; `pr_auc` picks trial 0 and puts trial 1
-  last by a factor of five; `f2` and `f1` pick trial 2 and also reject trial 1. The decision to
+  last (0.196 vs 0.988); `f2` and `f1` pick trial 2 and also reject trial 1. The decision to
   drop bare recall as a selection metric — argued a priori since V3 and regression-guarded in
   `tests/test_losses.py` — now has a **committed artifact showing the failure it prevents**.
   `main.py` prints this comparison (including recall) and a collapse alarm on every sweep.
-- **Attribute the collapse to the optimiser, not the loss.** Every trial used
-  `focal_asymmetric @ 50`; only the trial at the highest lr (3.8e-05) and smallest batch (4)
-  degenerated. Combined with the grid's `collapsed=False` at w=50 in both formulations, the two
-  artifacts are consistent and mutually explanatory: **the weight is safe, the learning rate is
-  not.** Never say "w=50 collapses".
+- **Attribution — and the exact limit of it.** Only the trial at the highest lr (3.8e-05) with the
+  smallest batch (4) degenerated, and the grid runs w=50 in both formulations at the tuned lr with
+  `collapsed=False` in all 8 rows. So **the weight is not *sufficient* to cause collapse** — that
+  much is established, and it means you must never say "w=50 collapses". But do **not** over-claim
+  the converse: every sweep trial used `focal_asymmetric@50`, so there is no within-sweep contrast
+  on the loss, and no low-weight/high-lr cell was ever run — the grid is not a clean control
+  because it differs in lr (1.814e-05), effective batch (16) and epochs (3) simultaneously. A
+  **learning-rate × weight interaction is not excluded**, and is mechanistically plausible (a ×50
+  positive-class weight amplifies gradients precisely where a high lr with batch 4 is already
+  unstable). Correct phrasing: *"collapse required the high learning rate; whether the weight
+  contributed we did not isolate."* One extra cell (`pos_weight@1` at lr 3.8e-05, bs 4) would
+  settle it in ~20 min on the MPS box.
 - **The two selection metrics disagree, within and across runs.** `metrics_agree = False` in all
   three trials (F2 and PR-AUC pick different epochs), and across trials PR-AUC picks trial 0
   while F2 picks trial 2. Both reject the degenerate model; they differ only among the healthy
@@ -174,17 +183,22 @@ truths**. The earlier mixed 2-/3-epoch table is superseded and its numbers are v
 - **The heuristic metric is saturated and, worse, uninformative.** Validation PR-AUC spans
   0.9864–0.9894 across all eight — a spread of **0.0030**. On the gold holdout the same eight
   span 0.7219–0.8211 — a spread of **0.0992, 33× larger**. The decisive statistic is the rank
-  correlation between the two ground truths: **Spearman ρ = −0.24** (Pearson −0.36). The
-  validation ranking does not merely have low resolution; it carries no information about
-  out-of-sample ordering. This is the strongest methodological result in the project.
+  correlation between the two ground truths: **Spearman ρ = −0.24** (p = 0.57, n = 8;
+  Pearson −0.36). ⚠️ State this carefully — with n=8 the correlation is **not significant**, so the
+  defensible claim is "**no detectable relationship** between the two orderings", not "it carries
+  no information" (absence of evidence is not evidence of absence, and the 95% CI on ρ is roughly
+  −0.85 to +0.55). The claim that carries the weight is the **spread ratio**: 0.0030 of resolution
+  is not enough to select on regardless of the correlation. Lead with 33×, use ρ as support. This
+  is still the strongest methodological result in the project.
 - **Run-to-run noise is large and must be quoted.** Four configurations have now been trained
   twice under nominally identical settings. Three reproduced to within 0.006 gold PR-AUC; one
   (`pos_weight@5`) moved **0.054** — over half the entire between-configuration spread. Both of
   its runs selected the epoch-2 checkpoint, so this is not a selection flip; the trajectories
   diverged by epoch 1 and the cause is unattributed (most likely non-deterministic MPS kernels).
-  **Treat gold gaps below ~0.05 as unresolved.** Note also that no `seed=` is passed to
-  `TrainingArguments`, so every run uses the HuggingFace default of 42 — the 0.054 is
-  non-determinism at a *fixed* seed and is a lower bound on true seed variance.
+  **Treat gold gaps below ~0.05 as unresolved.** `seed=cfg.RANDOM_STATE` is now passed to
+  `TrainingArguments` explicitly (added 2026-07-28); it equals HuggingFace's own default of 42, so
+  this changed no committed number and every run in the project is at seed 42. The 0.054 is
+  therefore non-determinism at a *fixed* seed, and a lower bound on true seed variance.
 - **What the variants actually do — report the shape, not a ranking.** Across w = 1, 5, 15, 50
   the gold PR-AUC of `pos_weight` is 0.8096, 0.7956, 0.7905, 0.7219: a **monotone decline**,
   range 0.0877. `focal_asymmetric` gives 0.7913, 0.7781, 0.8211, 0.8021: **non-monotone**, range
@@ -231,8 +245,9 @@ were an artifact of that bug and are void).
   `nndsvda` init) reproduces exactly. Quote NMF numbers as headline results; quote LDA
   numbers only from the committed artifacts, and say they are environment-sensitive.
 - Recovery of the known hazard types is **weak**: LDA K=4 purity 0.690 (exactly the
-  majority-class baseline), NMF K=6 purity 0.697; NMI 0.09–0.12 against a shuffle null
-  of 0.006–0.014.
+  majority-class baseline), NMF K=6 purity 0.697; NMI **0.084 (LDA K=4) and 0.119 (NMF K=6)**
+  against shuffle nulls of **0.0054 and 0.0137** respectively. Quote the range as 0.08–0.12
+  vs a null of 0.005–0.014 — not "0.09–0.12 / 0.006–0.014", which excluded LDA K=4.
 - But the **lift analysis is the real result**: NMF topic 1 (`gluten, celiac, cross
   contamination, gf` — per-topic NPMI +0.43, by far the most coherent topic found) has
   **lift 5.28** for `allergic_reaction`. What the models cannot do is subdivide the

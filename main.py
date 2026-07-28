@@ -33,12 +33,17 @@ def _init_wandb():
     except ImportError:
         print("W&B not installed — logging locally only. "
               "`pip install wandb` or set WANDB_MODE=disabled to silence this.")
+        # Also stop the Trainer's own WandbCallback from trying.
+        os.environ["WANDB_DISABLED"] = "true"
         return None
     try:
         wandb.login()
         return wandb
     except Exception as e:                                    # no key, no network, ...
         print(f"W&B login failed ({e}) — continuing with local logging only.")
+        # Critical: without this the Trainer's WandbCallback would still call
+        # wandb.init() in this same process and block or crash on the missing key.
+        os.environ["WANDB_DISABLED"] = "true"
         return None
 
 
@@ -104,13 +109,17 @@ def main():
             # This is no longer only an a-priori argument. THIS SWEEP CAUGHT ONE:
             # results/optuna_trials.csv trial 1 (lr=3.80e-05, batch_size=4) collapsed
             # to all-positive — pred_positive_rate 1.000, recall 1.000, precision
-            # 0.200 (= the validation base rate), pr_auc 0.196 — and stayed collapsed
-            # for all 4 epochs. Under `eval_recall` Optuna would have crowned it best
-            # of three; under `eval_pr_auc` it placed last by a factor of five.
-            # Note the attribution: the loss weight was focal_asymmetric@50 in every
-            # trial, and the 8-cell grid shows w=50 does NOT collapse at a tuned
-            # learning rate. So this is optimiser instability (high lr, tiny batch),
-            # not a pathology of the asymmetric loss.
+            # 0.200 (= the validation base rate), pr_auc 0.196. Its hard predictions
+            # stayed all-positive at every epoch (F2 pinned at the analytic 0.5556),
+            # though its ranking partially recovered (best-epoch pr_auc 0.643). Under
+            # `eval_recall` Optuna would have crowned it best of three; under
+            # `eval_pr_auc` it placed last, 0.196 against 0.988.
+            # Attribution, with its limit stated: the weight was focal_asymmetric@50
+            # in every trial, and the 8-cell grid shows w=50 does NOT collapse at the
+            # tuned learning rate, so the weight is not SUFFICIENT. But with one loss
+            # setting in the sweep and no low-weight/high-lr cell anywhere, a
+            # learning-rate x weight interaction is not excluded. Say collapse
+            # required the high lr; do not claim the lr was isolated.
             #
             # PR-AUC is also threshold-free, so the hyperparameter search stays
             # independent of our 0.20 operating point.

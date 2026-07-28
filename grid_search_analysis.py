@@ -322,6 +322,43 @@ def main():
               f"columns exist to resolve"
               + ("." if has_gold else ", and they are empty for this run."))
 
+    # Cross-ground-truth agreement. This is the project's headline methodological
+    # statistic and it used to live only in prose, computed by hand — so it is
+    # computed here, printed, and written to an artifact.
+    #
+    # Read it correctly: with n=8 the correlation is NOT significant, so the claim is
+    # "no detectable relationship between the two orderings", not "the validation
+    # ranking carries no information". The spread ratio below is the robust claim.
+    if has_gold:
+        paired = df[["pr_auc", "gold_pr_auc"]].dropna()
+        if len(paired) >= 3:
+            from scipy.stats import pearsonr, spearmanr
+
+            rho, rho_p = spearmanr(paired["pr_auc"], paired["gold_pr_auc"])
+            r, r_p = pearsonr(paired["pr_auc"], paired["gold_pr_auc"])
+            gold_spread = float(paired["gold_pr_auc"].max() - paired["gold_pr_auc"].min())
+            v_spread = float(paired["pr_auc"].max() - paired["pr_auc"].min())
+            ratio = (gold_spread / v_spread) if v_spread > 0 else float("inf")
+
+            print(f"\n--- Do the two ground truths agree on the ORDERING? (n={len(paired)}) ---")
+            print(f"  Spearman rho = {rho:+.4f}  (p = {rho_p:.4f})")
+            print(f"  Pearson  r   = {r:+.4f}  (p = {r_p:.4f})")
+            print(f"  validation spread {v_spread:.4f} vs gold spread {gold_spread:.4f} "
+                  f"-> {ratio:.1f}x")
+            if rho_p >= 0.05:
+                print("  NOT significant at n=%d: say 'no detectable relationship', NOT" % len(paired))
+                print("  'carries no information'. Lead with the spread ratio instead.")
+
+            summary_path = os.path.join(cfg.RESULTS_DIR, "grid_ground_truth_agreement.csv")
+            pd.DataFrame([{
+                "n_configs": len(paired),
+                "spearman_rho": rho, "spearman_p": rho_p,
+                "pearson_r": r, "pearson_p": r_p,
+                "validation_spread": v_spread, "gold_spread": gold_spread,
+                "spread_ratio": ratio,
+            }]).to_csv(summary_path, index=False)
+            print(f"  written to {summary_path}")
+
     if "collapsed" in df.columns:
         collapsed = df[df["collapsed"].fillna(False).astype(bool)]
         if not collapsed.empty:

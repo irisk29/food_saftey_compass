@@ -91,8 +91,9 @@ The project's contribution is not the classifier — it's the audit trail.
 
 - Yelp Academic Dataset → food/restaurant businesses only, reviews 5–800 words
 - Streamed and keyword-filtered until **1,500 flagged + 6,000 benign = 7,500 rows**
-- Natural hazard sparsity is brutal: **~0.12%** (24 hazards in the first 20,000 reviews) —
-  this is *why* a keyword funnel exists at all
+- Hazard reviews are rare enough that reaching 1,500 required **streaming and keyword-filtering
+  the corpus** — this is *why* a funnel exists at all, and why every gold rate in this deck is a
+  *funnel* rate rather than a population rate
 
 ### The heuristic label
 
@@ -144,7 +145,7 @@ We bucketed all **201 false positives** by cause. This is a rule-based taxonomy,
 | Residual / unexplained | 21.4% | — |
 | **Negated hazard** | **14.9%** | *"nothing here to trigger my allergy"* |
 | **Neutral allergen mention** | **11.4%** | *"great gluten-free options"* |
-| Secondhand, hypothetical, unpleasant-not-unsafe | 6.5% | *"my friend said she felt off"* |
+| Secondhand · hypothetical · unpleasant-not-unsafe · other | 6.5% | *"my friend said she felt off"* |
 
 ### The mechanism, in one line
 
@@ -196,7 +197,12 @@ feeding them back would be **direct label leakage**.
 | `focal_asymmetric` | `1 + (w−1)(1−p)^γ`, γ=2 | Penalty scales with the **error**, decays as confidence rises |
 | `fn_gated` | penalty only where `p < τ` | Implemented + unit-tested, **never run** — we say that too |
 
-- Deployed: `focal_asymmetric @ w=50`, threshold **0.20** (from the 100:1 cost model)
+- Deployed: `focal_asymmetric @ w=50`, threshold **0.20** — lowered from 0.50 *because of* the
+  100:1 asymmetry, but **not read off it.** ⚠️ Taken literally, a 100:1 ratio puts the
+  cost-minimising threshold at **0.01** — and that is exactly what our pipeline measured on both
+  evaluation sets. A 0.01 threshold means *flag essentially everything*, which is useless.
+  **We reject our own cost model's optimum** — and that is a second, independent reason cost is
+  not our selection metric.
 - **9 unit tests**, including a regression guard asserting an all-positive model is caught by
   F2 / PR-AUC / flag-rate
 
@@ -216,17 +222,23 @@ Our hyperparameter sweep produced a **degenerate model**, and it is on disk.
 | Trial 2 (lr 1.29e-05, bs 8) | 0.203 | 0.938 | 0.926 | 0.9876 |
 | **Trial 1** (lr 3.80e-05, bs 4) | <span class="bad">1.000</span> | <span class="bad">1.000</span> | <span class="bad">0.200</span> | <span class="bad">0.196</span> |
 
-Precision 0.200 **is** the base rate. It flagged every single review.
+Precision 0.200 **is** the base rate. It flagged every single review, at **every epoch** — its F2
+sat at exactly **0.5556**, the analytic value of an all-positive answer at a 20% base rate.
 
 ### Which objective would have picked it?
 
 | `recall` → | `pr_auc` → | `f2` / `f1` → |
 |---|---|---|
-| <span class="bad">**trial 1. The broken one.**</span> | <span class="win">trial 0; ranks trial 1 **last, by 5×**</span> | <span class="win">trial 2; also rejects trial 1</span> |
+| <span class="bad">**trial 1. The broken one.**</span> | <span class="win">trial 0; trial 1 ranks **last** (0.196 vs 0.988)</span> | <span class="win">trial 2; also rejects trial 1</span> |
 
-- ⚠️ **Attribution matters:** the loss weight was w=50 in *all three* trials. The 8-cell grid shows
-  `collapsed = False` at w=50 in **both** formulations. So this is **optimiser instability at high
-  learning rate / tiny batch — not a pathology of our loss.**
+- ⚠️ **Be precise about what did and did not recover.** The *hard predictions* never recovered —
+  all-positive at every epoch. The *ranking* partially did: trial 1's best-epoch PR-AUC reached
+  0.643, against 0.988 for the two stable trials. Still last, either way.
+- ⚠️ **Attribution — and the limit of what we can claim.** The loss weight was w=50 in *all three*
+  trials, and the 8-cell grid shows `collapsed = False` at w=50 in **both** formulations, so the
+  weight alone is **not sufficient** to cause collapse. But collapse appeared only at the high
+  learning rate with batch 4, and we have **no low-weight / high-lr run**, so we *cannot separate
+  the learning rate from a learning-rate × weight interaction* — and we don't claim to.
 - <span class="big">Any metric you can maximise with a constant answer is not a safety metric.</span>
 
 <span class="ev">Evidence: results/optuna_trials.csv · results/best_hyperparameters.json · results/grid_search_loss_variants.csv</span>
@@ -239,8 +251,11 @@ Gold holdout = 772 rows that never touched training, selection, or tuning.
 
 | Model | PR-AUC (heuristic) | PR-AUC (**gold**) | Δ |
 |---|---:|---:|---:|
-| Baseline: TF-IDF + XGBoost | 0.9785 | 0.7279 | <span class="bad">**−0.2506**</span> |
-| **DeBERTa-v3** (deployed, th=0.20) | 0.9874 | **0.8045** | −0.1830 |
+| Baseline: TF-IDF + XGBoost **+ metadata** | 0.9785 | 0.7279 | <span class="bad">**−0.2506**</span> |
+| **DeBERTa-v3** (deployed, th=0.20) — **text only** | 0.9874 | **0.8045** | −0.1830 |
+
+<span class="small">Note the handicap runs *against* us: the baseline gets TF-IDF **plus all 7 tabular
+features**; the transformer sees raw text alone. The advantaged model is the one that loses.</span>
 
 ### Read the two columns against each other — this is the whole slide
 
@@ -276,14 +291,18 @@ under one identical protocol (3 epochs, 900 optimiser steps each, verified from 
 
 <span class="big">Spearman ρ = −0.24</span> &nbsp;&nbsp;(p = 0.57; Pearson r = −0.36)
 
-The spread ratio says our label had **low resolution**. The rank correlation says it had
-**no information** — knowing a configuration's validation rank tells you *nothing* about its
-real-world rank, and if anything points mildly the wrong way.
+The spread ratio is the claim that carries: our label had **almost no resolution** — 0.0030 of
+spread to distinguish eight models.
 
-> *We could not tell our own models apart on our own label — and the ordering it did give us was
-> uncorrelated with the ordering on real data.*
+The rank correlation adds that there is **no detectable relationship** between the two orderings,
+and if anything it points mildly the wrong way. ⚠️ **We state the limit ourselves:** at n=8,
+p=0.57, this shows we *cannot demonstrate* the validation ranking carries information — it is not
+proof that it carries none. Either way it is nowhere near enough to select a model on.
 
-<span class="ev">Evidence: results/grid_search_loss_variants.csv (8 rows) · results/grid_search.log</span>
+> *We could not tell our own models apart on our own label — and the ordering it did give us showed
+> no relationship to the ordering on real data.*
+
+<span class="ev">Evidence: results/grid_search_loss_variants.csv (8 rows) · results/grid_ground_truth_agreement.csv (ρ, r, spreads) · results/grid_search.log</span>
 
 ---
 
@@ -300,7 +319,7 @@ Gold PR-AUC as the false-negative penalty grows:
 | **Range** | **0.0877** | **0.0430** |
 
 - `pos_weight` declines **monotonically** across all four weights. Under pure noise, drawing an
-  exactly monotone ordering of 4 points has probability 1/24 ≈ **4%**. A uniform penalty on
+  exactly monotone ordering of 4 points in the direction theory predicts has probability 1/24 ≈ **4%** (one-sided, pre-specified). A uniform penalty on
   *every* positive, cranked to 50, over-penalises and measurably damages out-of-sample ranking.
 - `focal_asymmetric` is **non-monotone** in a band **half as wide** — because its penalty decays
   as `(1−p)^γ`, so once the model is confident, the weight stops mattering. **That is what it was
@@ -352,12 +371,14 @@ report it), and ~27% of the fit corpus is benign **per our own Act I audit**.
 
 - **Lift 5.28** for `allergic_reaction` — the strongest association in the study
 - **Per-topic NPMI +0.43** — by far the most coherent topic found (the worst scores **−0.22**)
+- ⚠️ Own the limit: that topic is 5.28× *enriched* for allergen hazards but **captures only 7 of
+  the 38** such documents. High precision on a narrow slice, not broad coverage.
 
 ### ❌ It cannot subdivide the common, lexically-diffuse one
 
 - `food_poisoning` is **376 / 545 = 69%** of the validated set and stays one undifferentiated mass
 - Overall purity **0.697** (NMF K=6) vs a majority-class baseline of **0.690** — essentially no gain
-- NMI 0.09–0.12 against a shuffle null of 0.006–0.014: real, but weak
+- NMI 0.08–0.12 against a shuffle null of 0.005–0.014: real, but weak
 
 <span class="big">Topic models find the hazard with its own vocabulary, and fail on the hazard that shares everyone else's.</span>
 
@@ -374,7 +395,7 @@ LDA only from committed artifacts. We caught this ourselves and moved the headli
 
 ## Where the *model* still fails — and it inherits its teacher's blind spots
 
-DeBERTa on the gold holdout: **197 false positives, 39 false negatives.** Same taxonomy as Slide 5.
+DeBERTa on the gold holdout: **197 false positives, 39 false negatives.** Same taxonomy as the label-audit slide.
 
 | False positive mode | Share |
 |---|---:|
@@ -382,7 +403,7 @@ DeBERTa on the gold holdout: **197 false positives, 39 false negatives.** Same t
 | **Neutral allergen mention** | **32.0%** |
 | Generic complaint (11.2%) + residual (11.2%) | 22.3% |
 | Negated hazard | 8.6% |
-| Secondhand · hyperbole · unpleasant-not-unsafe | 4.6% |
+| Secondhand · hyperbole · unpleasant-not-unsafe · other | 4.6% |
 
 <span class="big">65% of the model's false alarms sit in the labelling rule's own top two failure modes.</span>
 
@@ -412,7 +433,7 @@ analytical result in the project, because it traces a model failure back to a *l
 | 1 | **Run-to-run noise up to 0.054 gold PR-AUC**, single seed (42) | Report weight-response *shape*, not a ranking; multi-seed study out of budget (~1 GPU-hr/cell) |
 | 2 | **Deployed config is not the grid leader** — 3rd of 8; 0.019 behind `focal@15`, 0.008 behind `pos_weight@1` | Weight was fixed *before* the grid ran; both margins are inside our own noise floor, so we report the grid rather than retrofit the deployment |
 | 3 | **Three gold metrics, three winners.** Deployed config is 3/8 on PR-AUC but **8/8 on F2** and 7/8 on cost | F2 and cost are computed at a **fixed** th=0.20 and reward over-flagging (`focal@5` flags **75%** of the holdout). We select on the **threshold-free** metric. |
-| 4 | **th=0.20 does not transfer.** Gold flag rate 0.659–0.750 vs a 46.0% base rate; gold precision 0.57–0.63 | Threshold was tuned against the heuristic label. Same models flag 19–21% on validation. **One more instance of the central thesis** — re-tune per distribution. |
+| 4 | **th=0.20 does not transfer.** Gold flag rate 0.659–0.750 vs a 46.0% base rate; gold precision 0.57–0.63 | Threshold was tuned against the heuristic label. Same models flag 18.6–20.8% on validation. **One more instance of the central thesis** — re-tune per distribution. |
 | 5 | **Hyperparameters**: 3-trial sweep only; reported system trained at lr 1.814e-05, sweep best 1.835e-05 | A 1.1% difference, far inside the 0.054 noise floor. `analysis.py` now warns on the mismatch. |
 | 6 | **LDA irreproducible** across machines; **46.0% is a funnel rate**; `fn_gated` never run | All three stated on their own slides, unprompted |
 
@@ -444,8 +465,9 @@ leaderboard → showed the model's residual false alarms **are the label's own i
 
 ### Business recommendation
 
-Deploy as a **screening funnel**, not a verdict — threshold set by the 100:1 cost model, human
-triage downstream, with the over-flagging rate quoted honestly to whoever staffs that triage.
+Deploy as a **screening funnel**, not a verdict — threshold **informed by** the 100:1 asymmetry but
+capped well above its literal optimum of 0.01, human triage downstream, and the over-flagging rate
+quoted honestly to whoever staffs that triage.
 
 **Future work:** token-attribution XAI · ordinal risk tiers · multi-seed error bars · cross-platform transfer
 
@@ -509,12 +531,17 @@ and would re-tune the threshold per model.
 
 **9. "Flag rate 66–75% on gold but base rate 46% — isn't the model over-flagging?"**
 Yes, and knowably. The 0.20 threshold was tuned against the heuristic label and does not transfer.
-Same models flag 19–21% on validation. One more instance of the central thesis.
+Same models flag 18.6–20.8% on validation. One more instance of the central thesis.
 
 **10. "Did the collapse come from your w=50 loss?"**
-No — and we checked. All three Optuna trials used `focal_asymmetric@50`; only the high-lr/small-batch
-trial collapsed. The 8-cell grid shows `collapsed=False` at w=50 in **both** formulations
-(`pos_weight@50`: flag rate 0.197, recall 0.921, precision 0.936). It is optimiser instability.
+Not on its own — the weight is demonstrably **not sufficient**: the 8-cell grid runs w=50 in both
+formulations at the tuned learning rate and `collapsed=False` in all 8 rows (`pos_weight@50`: flag
+rate 0.197, recall 0.921, precision 0.936). But we will not claim more than that. All three sweep
+trials used `focal_asymmetric@50`, so there is no within-sweep contrast on the loss, and we never
+ran a low-weight/high-lr cell — so a learning-rate × weight *interaction* is not excluded, and it is
+mechanistically plausible (a ×50 positive-class weight amplifies gradients exactly where a high lr
+with batch 4 is already unstable). The honest statement is: **collapse required the high learning
+rate; whether the weight contributed we did not isolate.** One extra cell would settle it.
 
 **11. "Your baseline nearly matches DeBERTa on your own label — was the transformer worth it?"**
 That is exactly the trap the gold set exists to expose. On the heuristic label the gap is 0.009;
@@ -524,21 +551,24 @@ on gold it is 0.077. TF-IDF was re-learning our regex, not doing the task.
 
 # APPENDIX (not presented) — Figure export checklist
 
-- [ ] **S4** — 2×2 confusion table, heuristic vs LLM (549 / 201 / 12 / 738)
-- [ ] **S5** — horizontal bar chart of the 201 FP buckets
-- [ ] **S6** — contamination diagram: 1,334/1,500 overlap → 0/772 clean
-- [ ] **S8** — 3-trial table with trial 1 highlighted red (flag rate 1.000)
-- [ ] **S9** — grouped bars: heuristic vs gold PR-AUC, baseline vs DeBERTa (the payoff figure)
-- [ ] **S10** — dot plot: 8 configs on validation (clustered) vs gold (spread) — shows 33× visually
-- [ ] **S11** — weight-response curve, `pos_weight` monotone vs `focal` flat, with a ±0.054 noise band
-- [ ] **S13** — lift table heat-strip (5.28 highlighted)
-- [ ] **S15** — FP bucket comparison: rule vs model, side by side (the "inherited blind spots" figure)
+- [ ] **Slide 5** — 2×2 confusion table, heuristic vs LLM (549 / 201 / 12 / 738)
+- [ ] **Slide 6** — horizontal bar chart of the 201 FP buckets
+- [ ] **Slide 7** — contamination diagram: 1,334/1,500 overlap → 0/772 clean
+- [ ] **Slide 9** — 3-trial table with trial 1 highlighted red (flag rate 1.000)
+- [ ] **Slide 10** — grouped bars: heuristic vs gold PR-AUC, baseline vs DeBERTa (the payoff figure)
+- [ ] **Slide 11** — dot plot: 8 configs on validation (clustered) vs gold (spread) — shows 33× visually
+- [ ] **Slide 12** — weight-response curve, `pos_weight` monotone vs `focal` flat, with a ±0.054 noise band
+- [ ] **Slide 14** — lift table heat-strip (5.28 highlighted)
+- [ ] **Slide 15** — FP bucket comparison: rule vs model, side by side (the "inherited blind spots" figure)
 - [ ] Reuse existing: `results/pr_curve_gold_*.png`, `results/cost_curve_gold_*.png`, `results/topic_model_selection.png`
 
 # Rehearsal notes
 
-- Target **14:00** to leave buffer. Slides 4–6 and 8–11 are the differentiators — do not rush them.
-- If long: drop slide 15 (every item lives on its home slide) and compress 12 to 30 s.
+- Target **14:00** to leave buffer. Slides **5–7** (the two audits) and **9–12** (metric, payoff,
+  saturation, weight response) are the differentiators — do not rush them.
+- If long: drop slide **16** (Limitations — every item also lives on its home slide) and compress
+  slide **13** to 30 s. ⚠️ **Never cut slide 15** — "inherited blind spots" is one of the three
+  sentences below.
 - Open with the one-sentence version. Close on the arc, not on a metric.
 - The three sentences that earn the top band, say them slowly:
   1. *"We could not tell our own models apart on our own label."*

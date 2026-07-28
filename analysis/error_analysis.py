@@ -321,8 +321,13 @@ _MODE_EXPLANATIONS = {
     "mild_understated_wording":
         "Understated symptoms ('didn't sit right with me'). Same ceiling as above, milder.",
     "buried_in_long_review":
-        "Hazard mentioned late in a long review, past the 256-token truncation window or "
-        "diluted by surrounding content. Directly actionable: raise max_length.",
+        "Hazard mentioned late in a long review, or diluted by surrounding content. "
+        "NOTE: the tempting 'past the 256-token window' reading was MEASURED AND REFUTED "
+        "for the gold false negatives — with the real DebertaV2TokenizerFast at "
+        "max_length=256, only 1 of 23 residual FNs has its hazard cue past the window, "
+        "only 2 of 23 exceed 256 tokens at all, and the median cue position is token 39. "
+        "Raising max_length would recover at most one FN. See results/gold_fn_handread.md. "
+        "Treat this bucket as dilution/salience, not truncation.",
     "positive_review_with_hazard":
         "4-5 star review reporting a hazard. The star gate in the labelling rule means the "
         "training data barely contains these, so the model associates hazards with low ratings.",

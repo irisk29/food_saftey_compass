@@ -181,12 +181,13 @@ npx @marp-team/marp-cli@latest -s slides/        # live preview at localhost:808
   with no W&B account degrades to local logging instead of blocking on a prompt. Set
   `WANDB_MODE=disabled` to silence it entirely; the CSVs in `results/` are written either way.
 
-**One provenance caveat that is disclosed rather than fixed:** `results/best_hyperparameters.json`
-names lr `1.8346e-05`, while every committed artifact was trained at `1.8140e-05` (bs 16 matches) —
-a 1.1% difference, far inside the measured 0.054 gold-PR-AUC run-to-run noise floor. Because
-`analysis.py` prefers the committed sweep, a re-run will *not* reproduce the CSVs bit-for-bit; it
-prints a `PROVENANCE WARNING` saying so. Use `FSC_USE_REPORTED_HPARAMS=1` to pin the as-reported
-values.
+**One provenance caveat, disclosed and made safe:** `results/best_hyperparameters.json` names lr
+`1.8346e-05`, while every committed artifact was trained at `1.8140e-05` (bs 16 matches) — a 1.1%
+difference, far inside the measured 0.054 gold-PR-AUC run-to-run noise floor. `analysis.py`
+therefore **defaults to the as-reported values**, so `python analysis.py` reproduces the committed
+CSVs rather than silently overwriting them at a different learning rate. Set
+`FSC_USE_SWEPT_HPARAMS=1` to train at the newer swept value instead — it prints a
+`PROVENANCE WARNING` and *will* overwrite every performance CSV and figure.
 
 Raw Yelp JSON and `data/` are gitignored; `postprocessing/enriched_allergy_hazard_dataset.csv`,
 both gold sets and everything in `results/` are committed, so all reported numbers can be

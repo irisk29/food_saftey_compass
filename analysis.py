@@ -32,11 +32,17 @@ from analysis.error_analysis import analyze_label_disagreement
 # prefers the JSON, a re-run of this script trains at the NEW rate and will therefore
 # not reproduce the committed CSVs bit-for-bit.
 #
-# That is the correct default going forward — the committed sweep should win over a
-# literal — but it must be visible rather than silent, so the mismatch is warned about
-# below. For context on whether it matters: the two rates differ by 1.1%, while
-# re-training a single fixed configuration was measured to move gold PR-AUC by up to
-# 0.054 (see CLAUDE.md, replicate pairs in the 8-cell grid). The hyperparameter
+# So this script DEFAULTS TO THE AS-REPORTED VALUES, deliberately. Preferring the JSON
+# would be defensible in general, but here it means the first command in the README
+# silently retrains at a different learning rate and overwrites every committed
+# performance CSV, error-analysis file and figure with numbers the deck no longer cites
+# — days before submission, on the strength of a printed warning nobody reads.
+# Reproducing the committed artifacts is the safe default; using the newer sweep is an
+# explicit opt-in via FSC_USE_SWEPT_HPARAMS=1.
+#
+# For context on whether the difference matters at all: the two rates differ by 1.1%,
+# while re-training a single fixed configuration was measured to move gold PR-AUC by up
+# to 0.054 (see CLAUDE.md, replicate pairs in the 8-cell grid). The hyperparameter
 # difference is far inside that noise floor.
 # -----------------------------------------------------------------------------
 REPORTED_LR = 1.8140198244240376e-05      # produced the committed artifacts
@@ -55,26 +61,35 @@ def _load_best_hyperparameters():
 
     with open(path) as f:
         best = json.load(f).get("best_params", {})
-    lr = best.get("learning_rate", DEFAULT_LR)
-    bs = best.get("batch_size", DEFAULT_BATCH_SIZE)
-    print(f"Using swept hyperparameters from {path}: lr={lr:.6e}, batch_size={bs}")
+    swept_lr = best.get("learning_rate", DEFAULT_LR)
+    swept_bs = best.get("batch_size", DEFAULT_BATCH_SIZE)
+    diverges = (abs(swept_lr - REPORTED_LR) / REPORTED_LR > 1e-6
+                or swept_bs != REPORTED_BATCH_SIZE)
+    use_swept = os.getenv("FSC_USE_SWEPT_HPARAMS", "").lower() in {"1", "true", "yes"}
 
-    # Make any divergence from the as-reported configuration impossible to miss.
-    if abs(lr - REPORTED_LR) / REPORTED_LR > 1e-6 or bs != REPORTED_BATCH_SIZE:
+    print(f"Sweep on disk ({path}): lr={swept_lr:.6e}, batch_size={swept_bs}")
+
+    if not diverges:
+        return swept_lr, swept_bs
+
+    if use_swept:
         print(
-            "\n  [!] PROVENANCE WARNING — this run will NOT reproduce the committed CSVs.\n"
+            "\n  [!] PROVENANCE WARNING — FSC_USE_SWEPT_HPARAMS is set, so this run will\n"
+            "      NOT reproduce the committed CSVs, and it will OVERWRITE them.\n"
             f"      committed artifacts were trained at lr={REPORTED_LR:.6e}, bs={REPORTED_BATCH_SIZE}\n"
-            f"      this run will train at        lr={lr:.6e}, bs={bs}\n"
-            "      (relative lr difference: "
-            f"{abs(lr - REPORTED_LR) / REPORTED_LR:.2%})\n"
-            "      Set FSC_USE_REPORTED_HPARAMS=1 to pin the as-reported values instead.\n"
+            f"      this run will train at        lr={swept_lr:.6e}, bs={swept_bs}\n"
+            f"      (relative lr difference: {abs(swept_lr - REPORTED_LR) / REPORTED_LR:.2%})\n"
         )
-        if os.getenv("FSC_USE_REPORTED_HPARAMS", "").lower() in {"1", "true", "yes"}:
-            print(f"      FSC_USE_REPORTED_HPARAMS set — pinning lr={REPORTED_LR:.6e}, "
-                  f"bs={REPORTED_BATCH_SIZE}.\n")
-            return REPORTED_LR, REPORTED_BATCH_SIZE
+        return swept_lr, swept_bs
 
-    return lr, bs
+    print(
+        f"  [i] The sweep's lr differs from the as-reported one by "
+        f"{abs(swept_lr - REPORTED_LR) / REPORTED_LR:.2%}. Defaulting to the AS-REPORTED\n"
+        f"      values (lr={REPORTED_LR:.6e}, bs={REPORTED_BATCH_SIZE}) so this run reproduces the\n"
+        "      committed artifacts. Set FSC_USE_SWEPT_HPARAMS=1 to train at the swept values\n"
+        "      instead (this will overwrite every committed performance CSV and figure)."
+    )
+    return REPORTED_LR, REPORTED_BATCH_SIZE
 
 
 def main():

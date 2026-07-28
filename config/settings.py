@@ -58,6 +58,15 @@ VAL_SIZE = 0.2
 # alarm (see COST_FALSE_NEGATIVE / COST_FALSE_POSITIVE in analysis/evaluation_pipeline.py),
 # so we accept more false alarms to buy recall. Reported alongside th=0.50 everywhere
 # so the trade-off is visible rather than baked in silently.
+#
+# IMPORTANT — 0.20 is NOT the cost model's optimum, and must not be described as such.
+# A literal 100:1 ratio puts the Bayes-optimal threshold at ~1/(1+100) = 0.01, and that
+# is exactly what the pipeline measures: results/analysis_run.log reports
+# "Cost-minimising threshold on this set: 0.01 (deployed: 0.20)" on BOTH evaluation sets.
+# A 0.01 threshold means flag essentially everything, which is operationally useless.
+# 0.20 is a judgement call informed by the asymmetry, capped well above its literal
+# optimum — and the gap between the two is itself a reason cost is not a selection
+# metric here. State it that way.
 DECISION_THRESHOLD = 0.20
 
 # Loss configuration — see src/losses.py for the derivation of each variant.
@@ -77,12 +86,23 @@ FN_GATE_TAU = DECISION_THRESHOLD    # fn_gated only; gate at the deployed thresh
 # would have chosen so the disagreement can be reported.
 # Neither can be gamed by an all-positive model, unlike the plain `recall` this
 # replaced — that is why recall was dropped as a selection metric, and
-# tests/test_losses.py keeps a regression guard on it. The collapse itself was an
-# un-persisted historical observation under the label-keyed `pos_weight` formulation
-# selected on bare recall; no committed artifact demonstrates it, so it is not quoted
-# as a measurement. The current focal_asymmetric loss at this same weight does NOT
-# collapse (test-split flag rate 0.207), plausibly because its penalty decays as
-# confidence rises. Pending: w=50 in grid_search_analysis.py, which has never been run.
+# tests/test_losses.py keeps a regression guard on it.
+#
+# As of 2026-07-28 that decision is MEASURED, not just argued a priori. Two artifacts,
+# and they say different things — keep them straight:
+#   * results/optuna_trials.csv — trial 1 (lr=3.80e-05, batch=4) collapsed to
+#     all-positive: flag rate 1.000, recall 1.000, precision 0.200 (= the base rate),
+#     pr_auc 0.196. Ranked by candidate objective, bare `recall` picks that trial FIRST
+#     of three; `pr_auc` ranks it last and `f2`/`f1` also reject it. This is the
+#     artifact demonstrating the failure these metric choices prevent.
+#   * results/grid_search_loss_variants.csv — the 8-cell grid runs w=50 in BOTH
+#     formulations at the tuned learning rate and `collapsed=False` in all 8 rows
+#     (pos_weight@50 flag rate 0.1967, focal_asymmetric@50 0.1858). So the weight
+#     is NOT sufficient to cause collapse.
+# Attribution limit, stated honestly: all three sweep trials used focal_asymmetric@50
+# and no low-weight/high-lr cell was ever run, so a learning-rate x weight interaction
+# is not excluded. Say "collapse required the high learning rate"; do NOT say "w=50
+# collapses", and do NOT claim the learning rate was isolated from the weight.
 CHECKPOINT_METRIC = "f2"        # HuggingFace metric_for_best_model (without 'eval_' prefix)
 HPO_METRIC = "pr_auc"           # Optuna objective
 FBETA = 2.0                     # beta for the F-beta metric; 2.0 weights recall 2x precision

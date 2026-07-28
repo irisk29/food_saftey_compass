@@ -152,8 +152,9 @@ th { background: #f3e9e9; }
 <ul>
 <li>Yelp Academic Dataset → food/restaurant businesses only, reviews 5–800 words</li>
 <li>Streamed and keyword-filtered until <strong>1,500 flagged + 6,000 benign = 7,500 rows</strong></li>
-<li>Natural hazard sparsity is brutal: <strong>~0.12%</strong> (24 hazards in the first 20,000 reviews) —<br />
-this is <em>why</em> a keyword funnel exists at all</li>
+<li>Hazard reviews are rare enough that reaching 1,500 required <strong>streaming and keyword-filtering<br />
+the corpus</strong> — this is <em>why</em> a funnel exists at all, and why every gold rate in this deck is a<br />
+<em>funnel</em> rate rather than a population rate</li>
 </ul>
 <h3 id="the-heuristic-label">The heuristic label</h3>
 <blockquote>
@@ -290,7 +291,7 @@ th { background: #f3e9e9; }
 <td><em>&quot;great gluten-free options&quot;</em></td>
 </tr>
 <tr>
-<td>Secondhand, hypothetical, unpleasant-not-unsafe</td>
+<td>Secondhand · hypothetical · unpleasant-not-unsafe · other</td>
 <td style="text-align:right">6.5%</td>
 <td><em>&quot;my friend said she felt off&quot;</em></td>
 </tr>
@@ -403,7 +404,12 @@ feeding them back would be <strong>direct label leakage</strong>.</p>
 </tbody>
 </table>
 <ul>
-<li>Deployed: <code>focal_asymmetric @ w=50</code>, threshold <strong>0.20</strong> (from the 100:1 cost model)</li>
+<li>Deployed: <code>focal_asymmetric @ w=50</code>, threshold <strong>0.20</strong> — lowered from 0.50 <em>because of</em> the<br />
+100:1 asymmetry, but <strong>not read off it.</strong> <img class="emoji" draggable="false" alt="⚠️" src="https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/svg/26a0.svg" data-marp-twemoji=""/> Taken literally, a 100:1 ratio puts the<br />
+cost-minimising threshold at <strong>0.01</strong> — and that is exactly what our pipeline measured on both<br />
+evaluation sets. A 0.01 threshold means <em>flag essentially everything</em>, which is useless.<br />
+<strong>We reject our own cost model's optimum</strong> — and that is a second, independent reason cost is<br />
+not our selection metric.</li>
 <li><strong>9 unit tests</strong>, including a regression guard asserting an all-positive model is caught by<br />
 F2 / PR-AUC / flag-rate</li>
 </ul>
@@ -470,7 +476,8 @@ th { background: #f3e9e9; }
 </tr>
 </tbody>
 </table>
-<p>Precision 0.200 <strong>is</strong> the base rate. It flagged every single review.</p>
+<p>Precision 0.200 <strong>is</strong> the base rate. It flagged every single review, at <strong>every epoch</strong> — its F2<br />
+sat at exactly <strong>0.5556</strong>, the analytic value of an all-positive answer at a 20% base rate.</p>
 <h3 id="which-objective-would-have-picked-it">Which objective would have picked it?</h3>
 <table>
 <thead>
@@ -483,15 +490,20 @@ th { background: #f3e9e9; }
 <tbody>
 <tr>
 <td><span class="bad"><strong>trial 1. The broken one.</strong></span></td>
-<td><span class="win">trial 0; ranks trial 1 <strong>last, by 5×</strong></span></td>
+<td><span class="win">trial 0; trial 1 ranks <strong>last</strong> (0.196 vs 0.988)</span></td>
 <td><span class="win">trial 2; also rejects trial 1</span></td>
 </tr>
 </tbody>
 </table>
 <ul>
-<li><img class="emoji" draggable="false" alt="⚠️" src="https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/svg/26a0.svg" data-marp-twemoji=""/> <strong>Attribution matters:</strong> the loss weight was w=50 in <em>all three</em> trials. The 8-cell grid shows<br />
-<code>collapsed = False</code> at w=50 in <strong>both</strong> formulations. So this is <strong>optimiser instability at high<br />
-learning rate / tiny batch — not a pathology of our loss.</strong></li>
+<li><img class="emoji" draggable="false" alt="⚠️" src="https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/svg/26a0.svg" data-marp-twemoji=""/> <strong>Be precise about what did and did not recover.</strong> The <em>hard predictions</em> never recovered —<br />
+all-positive at every epoch. The <em>ranking</em> partially did: trial 1's best-epoch PR-AUC reached<br />
+0.643, against 0.988 for the two stable trials. Still last, either way.</li>
+<li><img class="emoji" draggable="false" alt="⚠️" src="https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/svg/26a0.svg" data-marp-twemoji=""/> <strong>Attribution — and the limit of what we can claim.</strong> The loss weight was w=50 in <em>all three</em><br />
+trials, and the 8-cell grid shows <code>collapsed = False</code> at w=50 in <strong>both</strong> formulations, so the<br />
+weight alone is <strong>not sufficient</strong> to cause collapse. But collapse appeared only at the high<br />
+learning rate with batch 4, and we have <strong>no low-weight / high-lr run</strong>, so we <em>cannot separate<br />
+the learning rate from a learning-rate × weight interaction</em> — and we don't claim to.</li>
 <li><span class="big">Any metric you can maximise with a constant answer is not a safety metric.</span></li>
 </ul>
 <p><span class="ev">Evidence: results/optuna_trials.csv · results/best_hyperparameters.json · results/grid_search_loss_variants.csv</span></p>
@@ -533,19 +545,21 @@ th { background: #f3e9e9; }
 </thead>
 <tbody>
 <tr>
-<td>Baseline: TF-IDF + XGBoost</td>
+<td>Baseline: TF-IDF + XGBoost <strong>+ metadata</strong></td>
 <td style="text-align:right">0.9785</td>
 <td style="text-align:right">0.7279</td>
 <td style="text-align:right"><span class="bad"><strong>−0.2506</strong></span></td>
 </tr>
 <tr>
-<td><strong>DeBERTa-v3</strong> (deployed, th=0.20)</td>
+<td><strong>DeBERTa-v3</strong> (deployed, th=0.20) — <strong>text only</strong></td>
 <td style="text-align:right">0.9874</td>
 <td style="text-align:right"><strong>0.8045</strong></td>
 <td style="text-align:right">−0.1830</td>
 </tr>
 </tbody>
 </table>
+<p><span class="small">Note the handicap runs <em>against</em> us: the baseline gets TF-IDF <strong>plus all 7 tabular<br />
+features</strong>; the transformer sees raw text alone. The advantaged model is the one that loses.</span></p>
 <h3 id="read-the-two-columns-against-each-other--this-is-the-whole-slide">Read the two columns against each other — this is the whole slide</h3>
 <ul>
 <li>On <strong>our own label</strong>, the bag-of-words baseline is within <strong>0.009</strong> of a transformer. It looks<br />
@@ -611,14 +625,17 @@ under one identical protocol (3 epochs, 900 optimiser steps each, verified from 
 <p><span class="big">33× wider on real data.</span></p>
 <h3 id="the-sharper-statistic--rank-correlation-between-the-two-ground-truths">The sharper statistic — rank correlation between the two ground truths</h3>
 <p><span class="big">Spearman ρ = −0.24</span>   (p = 0.57; Pearson r = −0.36)</p>
-<p>The spread ratio says our label had <strong>low resolution</strong>. The rank correlation says it had<br />
-<strong>no information</strong> — knowing a configuration's validation rank tells you <em>nothing</em> about its<br />
-real-world rank, and if anything points mildly the wrong way.</p>
+<p>The spread ratio is the claim that carries: our label had <strong>almost no resolution</strong> — 0.0030 of<br />
+spread to distinguish eight models.</p>
+<p>The rank correlation adds that there is <strong>no detectable relationship</strong> between the two orderings,<br />
+and if anything it points mildly the wrong way. <img class="emoji" draggable="false" alt="⚠️" src="https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/svg/26a0.svg" data-marp-twemoji=""/> <strong>We state the limit ourselves:</strong> at n=8,<br />
+p=0.57, this shows we <em>cannot demonstrate</em> the validation ranking carries information — it is not<br />
+proof that it carries none. Either way it is nowhere near enough to select a model on.</p>
 <blockquote>
-<p><em>We could not tell our own models apart on our own label — and the ordering it did give us was<br />
-uncorrelated with the ordering on real data.</em></p>
+<p><em>We could not tell our own models apart on our own label — and the ordering it did give us showed<br />
+no relationship to the ordering on real data.</em></p>
 </blockquote>
-<p><span class="ev">Evidence: results/grid_search_loss_variants.csv (8 rows) · results/grid_search.log</span></p>
+<p><span class="ev">Evidence: results/grid_search_loss_variants.csv (8 rows) · results/grid_ground_truth_agreement.csv (ρ, r, spreads) · results/grid_search.log</span></p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="12" data-paginate="true" data-header="Allergen &amp; Food Safety Hazard Compass · Text Mining 2026" data-theme="default" data-style="section { font-size: 22px; }
 section.lead { text-align: center; }
@@ -684,7 +701,7 @@ th { background: #f3e9e9; }
 </table>
 <ul>
 <li><code>pos_weight</code> declines <strong>monotonically</strong> across all four weights. Under pure noise, drawing an<br />
-exactly monotone ordering of 4 points has probability 1/24 ≈ <strong>4%</strong>. A uniform penalty on<br />
+exactly monotone ordering of 4 points in the direction theory predicts has probability 1/24 ≈ <strong>4%</strong> (one-sided, pre-specified). A uniform penalty on<br />
 <em>every</em> positive, cranked to 50, over-penalises and measurably damages out-of-sample ranking.</li>
 <li><code>focal_asymmetric</code> is <strong>non-monotone</strong> in a band <strong>half as wide</strong> — because its penalty decays<br />
 as <code>(1−p)^γ</code>, so once the model is confident, the weight stops mattering. <strong>That is what it was<br />
@@ -771,12 +788,14 @@ th { background: #f3e9e9; }
 <ul>
 <li><strong>Lift 5.28</strong> for <code>allergic_reaction</code> — the strongest association in the study</li>
 <li><strong>Per-topic NPMI +0.43</strong> — by far the most coherent topic found (the worst scores <strong>−0.22</strong>)</li>
+<li><img class="emoji" draggable="false" alt="⚠️" src="https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/svg/26a0.svg" data-marp-twemoji=""/> Own the limit: that topic is 5.28× <em>enriched</em> for allergen hazards but <strong>captures only 7 of<br />
+the 38</strong> such documents. High precision on a narrow slice, not broad coverage.</li>
 </ul>
 <h3 id="%E2%9D%8C-it-cannot-subdivide-the-common-lexically-diffuse-one"><img class="emoji" draggable="false" alt="❌" src="https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/svg/274c.svg" data-marp-twemoji=""/> It cannot subdivide the common, lexically-diffuse one</h3>
 <ul>
 <li><code>food_poisoning</code> is <strong>376 / 545 = 69%</strong> of the validated set and stays one undifferentiated mass</li>
 <li>Overall purity <strong>0.697</strong> (NMF K=6) vs a majority-class baseline of <strong>0.690</strong> — essentially no gain</li>
-<li>NMI 0.09–0.12 against a shuffle null of 0.006–0.014: real, but weak</li>
+<li>NMI 0.08–0.12 against a shuffle null of 0.005–0.014: real, but weak</li>
 </ul>
 <p><span class="big">Topic models find the hazard with its own vocabulary, and fail on the hazard that shares everyone else's.</span></p>
 <p>That is a <strong>property of the technique</strong> — distributional co-occurrence needs distinctive words —<br />
@@ -811,7 +830,7 @@ th { background: #f3e9e9; }
 ;" data-marpit-pagination-total="20" data-size="16:9">
 <header>Allergen &amp; Food Safety Hazard Compass · Text Mining 2026</header>
 <h2 id="where-the-model-still-fails--and-it-inherits-its-teachers-blind-spots">Where the <em>model</em> still fails — and it inherits its teacher's blind spots</h2>
-<p>DeBERTa on the gold holdout: <strong>197 false positives, 39 false negatives.</strong> Same taxonomy as Slide 5.</p>
+<p>DeBERTa on the gold holdout: <strong>197 false positives, 39 false negatives.</strong> Same taxonomy as the label-audit slide.</p>
 <table>
 <thead>
 <tr>
@@ -837,7 +856,7 @@ th { background: #f3e9e9; }
 <td style="text-align:right">8.6%</td>
 </tr>
 <tr>
-<td>Secondhand · hyperbole · unpleasant-not-unsafe</td>
+<td>Secondhand · hyperbole · unpleasant-not-unsafe · other</td>
 <td style="text-align:right">4.6%</td>
 </tr>
 </tbody>
@@ -911,7 +930,7 @@ th { background: #f3e9e9; }
 <tr>
 <td style="text-align:right">4</td>
 <td><strong>th=0.20 does not transfer.</strong> Gold flag rate 0.659–0.750 vs a 46.0% base rate; gold precision 0.57–0.63</td>
-<td>Threshold was tuned against the heuristic label. Same models flag 19–21% on validation. <strong>One more instance of the central thesis</strong> — re-tune per distribution.</td>
+<td>Threshold was tuned against the heuristic label. Same models flag 18.6–20.8% on validation. <strong>One more instance of the central thesis</strong> — re-tune per distribution.</td>
 </tr>
 <tr>
 <td style="text-align:right">5</td>
@@ -967,8 +986,9 @@ against the baseline's <strong>$585,300</strong>.</li>
 cleanly and unsupervised (lift <strong>5.28</strong>, NPMI <strong>+0.43</strong>); the food-poisoning mass (69%) does not.</li>
 </ul>
 <h3 id="business-recommendation">Business recommendation</h3>
-<p>Deploy as a <strong>screening funnel</strong>, not a verdict — threshold set by the 100:1 cost model, human<br />
-triage downstream, with the over-flagging rate quoted honestly to whoever staffs that triage.</p>
+<p>Deploy as a <strong>screening funnel</strong>, not a verdict — threshold <strong>informed by</strong> the 100:1 asymmetry but<br />
+capped well above its literal optimum of 0.01, human triage downstream, and the over-flagging rate<br />
+quoted honestly to whoever staffs that triage.</p>
 <p><strong>Future work:</strong> token-attribution XAI · ordinal risk tiers · multi-seed error bars · cross-platform transfer</p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="18" data-paginate="true" data-header="Allergen &amp; Food Safety Hazard Compass · Text Mining 2026" data-class="lead" data-theme="default" data-style="section { font-size: 22px; }
@@ -1063,11 +1083,16 @@ flags more (<code>focal@5</code>: 75% of the holdout) looks cheap under a 100:1 
 and would re-tune the threshold per model.</p>
 <p><strong>9. &quot;Flag rate 66–75% on gold but base rate 46% — isn't the model over-flagging?&quot;</strong><br />
 Yes, and knowably. The 0.20 threshold was tuned against the heuristic label and does not transfer.<br />
-Same models flag 19–21% on validation. One more instance of the central thesis.</p>
+Same models flag 18.6–20.8% on validation. One more instance of the central thesis.</p>
 <p><strong>10. &quot;Did the collapse come from your w=50 loss?&quot;</strong><br />
-No — and we checked. All three Optuna trials used <code>focal_asymmetric@50</code>; only the high-lr/small-batch<br />
-trial collapsed. The 8-cell grid shows <code>collapsed=False</code> at w=50 in <strong>both</strong> formulations<br />
-(<code>pos_weight@50</code>: flag rate 0.197, recall 0.921, precision 0.936). It is optimiser instability.</p>
+Not on its own — the weight is demonstrably <strong>not sufficient</strong>: the 8-cell grid runs w=50 in both<br />
+formulations at the tuned learning rate and <code>collapsed=False</code> in all 8 rows (<code>pos_weight@50</code>: flag<br />
+rate 0.197, recall 0.921, precision 0.936). But we will not claim more than that. All three sweep<br />
+trials used <code>focal_asymmetric@50</code>, so there is no within-sweep contrast on the loss, and we never<br />
+ran a low-weight/high-lr cell — so a learning-rate × weight <em>interaction</em> is not excluded, and it is<br />
+mechanistically plausible (a ×50 positive-class weight amplifies gradients exactly where a high lr<br />
+with batch 4 is already unstable). The honest statement is: <strong>collapse required the high learning<br />
+rate; whether the weight contributed we did not isolate.</strong> One extra cell would settle it.</p>
 <p><strong>11. &quot;Your baseline nearly matches DeBERTa on your own label — was the transformer worth it?&quot;</strong><br />
 That is exactly the trap the gold set exists to expose. On the heuristic label the gap is 0.009;<br />
 on gold it is 0.077. TF-IDF was re-learning our regex, not doing the task.</p>
@@ -1098,21 +1123,24 @@ th { background: #f3e9e9; }
 <header>Allergen &amp; Food Safety Hazard Compass · Text Mining 2026</header>
 <h1 id="appendix-not-presented--figure-export-checklist">APPENDIX (not presented) — Figure export checklist</h1>
 <ul>
-<li>[ ] <strong>S4</strong> — 2×2 confusion table, heuristic vs LLM (549 / 201 / 12 / 738)</li>
-<li>[ ] <strong>S5</strong> — horizontal bar chart of the 201 FP buckets</li>
-<li>[ ] <strong>S6</strong> — contamination diagram: 1,334/1,500 overlap → 0/772 clean</li>
-<li>[ ] <strong>S8</strong> — 3-trial table with trial 1 highlighted red (flag rate 1.000)</li>
-<li>[ ] <strong>S9</strong> — grouped bars: heuristic vs gold PR-AUC, baseline vs DeBERTa (the payoff figure)</li>
-<li>[ ] <strong>S10</strong> — dot plot: 8 configs on validation (clustered) vs gold (spread) — shows 33× visually</li>
-<li>[ ] <strong>S11</strong> — weight-response curve, <code>pos_weight</code> monotone vs <code>focal</code> flat, with a ±0.054 noise band</li>
-<li>[ ] <strong>S13</strong> — lift table heat-strip (5.28 highlighted)</li>
-<li>[ ] <strong>S15</strong> — FP bucket comparison: rule vs model, side by side (the &quot;inherited blind spots&quot; figure)</li>
+<li>[ ] <strong>Slide 5</strong> — 2×2 confusion table, heuristic vs LLM (549 / 201 / 12 / 738)</li>
+<li>[ ] <strong>Slide 6</strong> — horizontal bar chart of the 201 FP buckets</li>
+<li>[ ] <strong>Slide 7</strong> — contamination diagram: 1,334/1,500 overlap → 0/772 clean</li>
+<li>[ ] <strong>Slide 9</strong> — 3-trial table with trial 1 highlighted red (flag rate 1.000)</li>
+<li>[ ] <strong>Slide 10</strong> — grouped bars: heuristic vs gold PR-AUC, baseline vs DeBERTa (the payoff figure)</li>
+<li>[ ] <strong>Slide 11</strong> — dot plot: 8 configs on validation (clustered) vs gold (spread) — shows 33× visually</li>
+<li>[ ] <strong>Slide 12</strong> — weight-response curve, <code>pos_weight</code> monotone vs <code>focal</code> flat, with a ±0.054 noise band</li>
+<li>[ ] <strong>Slide 14</strong> — lift table heat-strip (5.28 highlighted)</li>
+<li>[ ] <strong>Slide 15</strong> — FP bucket comparison: rule vs model, side by side (the &quot;inherited blind spots&quot; figure)</li>
 <li>[ ] Reuse existing: <code>results/pr_curve_gold_*.png</code>, <code>results/cost_curve_gold_*.png</code>, <code>results/topic_model_selection.png</code></li>
 </ul>
 <h1 id="rehearsal-notes">Rehearsal notes</h1>
 <ul>
-<li>Target <strong>14:00</strong> to leave buffer. Slides 4–6 and 8–11 are the differentiators — do not rush them.</li>
-<li>If long: drop slide 15 (every item lives on its home slide) and compress 12 to 30 s.</li>
+<li>Target <strong>14:00</strong> to leave buffer. Slides <strong>5–7</strong> (the two audits) and <strong>9–12</strong> (metric, payoff,<br />
+saturation, weight response) are the differentiators — do not rush them.</li>
+<li>If long: drop slide <strong>16</strong> (Limitations — every item also lives on its home slide) and compress<br />
+slide <strong>13</strong> to 30 s. <img class="emoji" draggable="false" alt="⚠️" src="https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/svg/26a0.svg" data-marp-twemoji=""/> <strong>Never cut slide 15</strong> — &quot;inherited blind spots&quot; is one of the three<br />
+sentences below.</li>
 <li>Open with the one-sentence version. Close on the arc, not on a metric.</li>
 <li>The three sentences that earn the top band, say them slowly:
 <ol>

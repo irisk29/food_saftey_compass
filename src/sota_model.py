@@ -64,13 +64,17 @@ def compute_metrics(eval_pred):
       * But collapse is real and is now on disk. Optuna trial 1
         (results/optuna_trials.csv: lr=3.80e-05, batch_size=4, focal_asymmetric@50)
         went fully degenerate — `pred_positive_rate` 1.000, recall 1.000,
-        precision 0.200 (= the validation base rate), pr_auc 0.196 — and never
-        recovered across 4 epochs. The failure is an OPTIMISER instability at high
-        learning rate / tiny batch, not a property of the loss weight.
+        precision 0.200 (= the validation base rate), pr_auc 0.196. Its hard
+        predictions never recovered — all-positive at every epoch, F2 pinned at
+        0.5556, the analytic all-positive value — though its ranking partially did
+        (best-epoch pr_auc 0.643). Collapse required a HIGH LEARNING RATE and a tiny
+        batch; the weight alone is not sufficient. But all three trials used w=50 and
+        no low-weight/high-lr cell was ever run, so a learning-rate x weight
+        interaction is NOT excluded — do not claim the lr was isolated.
 
     That trial is the empirical justification for CHECKPOINT_METRIC/HPO_METRIC:
     bare `recall` would have ranked the degenerate trial FIRST of three (1.000 vs
-    0.9375 and 0.9125), while `pr_auc` ranked it last by a factor of five and `f2`
+    0.9375 and 0.9125), while `pr_auc` ranked it last (0.196 vs 0.988) and `f2`
     also rejected it. The a-priori argument against recall now has an artifact.
     """
     logits, labels = eval_pred
@@ -122,15 +126,31 @@ def _report_to():
     `accelerate` dependencies). Now it is opt-out: set WANDB_MODE=disabled or
     WANDB_DISABLED=true and training runs with no external service at all.
     """
-    if os.getenv("WANDB_MODE", "").lower() in {"disabled", "offline_disabled"}:
+    if os.getenv("WANDB_MODE", "").lower() == "disabled":
         return "none"
     if os.getenv("WANDB_DISABLED", "").lower() in {"1", "true", "yes"}:
         return "none"
     try:
-        import wandb  # noqa: F401
+        import wandb
     except ImportError:
         print("    [warn] wandb not installed — training logs stay local "
               "(report_to='none'). Set WANDB_MODE=disabled to silence this.")
+        return "none"
+
+    # Installed is not the same as usable. requirements.txt installs wandb, so on a
+    # clean clone the import succeeds and HuggingFace's WandbCallback then calls
+    # wandb.init(), which prompts for an API key on a tty and raises UsageError
+    # without one. That is a crash on the primary entry point (analysis.py), so an
+    # unauthenticated install must degrade rather than block.
+    try:
+        has_key = bool(os.getenv("WANDB_API_KEY")) or bool(
+            getattr(getattr(wandb, "api", None), "api_key", None)
+        )
+    except Exception:
+        has_key = False
+    if not has_key:
+        print("    [warn] wandb installed but not authenticated — training logs stay "
+              "local (report_to='none'). Run `wandb login` or set WANDB_MODE=disabled.")
         return "none"
     return "wandb"
 
