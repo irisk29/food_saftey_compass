@@ -57,8 +57,20 @@ def main():
     # Missing it fails at tokenizer load, minutes into a run.
     check("sentencepiece (required for deberta-v3 tokenizer)", dep("sentencepiece"))
 
+    # accelerate is required by transformers.Trainer — without it TrainingArguments
+    # refuses to construct. This and sentencepiece were the two hard crashes that made
+    # a clean clone unrunnable until 2026-07-28; both are now in requirements.txt.
+    check("accelerate (required by transformers.Trainer)", dep("accelerate"))
+
+    # protobuf is only needed to convert the SentencePiece model for the *fast*
+    # tokenizer, which the truncation measurement in the error analysis uses.
+    check("protobuf (fast tokenizer conversion)", dep("google.protobuf", "google.protobuf"),
+          blocking=False)
+
+    # W&B is optional by design: src/sota_model.py falls back to report_to='none' and
+    # main.py guards its import, so a clone with no account still runs.
     for pkg in ("optuna", "wandb"):
-        check(f"{pkg} (only needed for main.py)", dep(pkg), blocking=False)
+        check(f"{pkg} (only needed for main.py; wandb is optional)", dep(pkg), blocking=False)
 
     def vader():
         from nltk.sentiment.vader import SentimentIntensityAnalyzer

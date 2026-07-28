@@ -19,25 +19,62 @@ from src.sota_model import run_sota_training, selection_disagreement, tokenize_s
 from analysis.evaluation_pipeline import run_production_evaluation
 from analysis.error_analysis import analyze_label_disagreement
 
-# Best configuration from the Optuna sweep in main.py. Kept as a literal so a final
-# run is reproducible without re-running the sweep; results/best_hyperparameters.json
-# takes precedence when it exists.
-DEFAULT_LR = 1.8140198244240376e-05
-DEFAULT_BATCH_SIZE = 16
+# -----------------------------------------------------------------------------
+# Hyperparameter provenance. Read this before re-running.
+#
+# REPORTED_LR is the learning rate that actually produced every committed number in
+# results/performance_*.csv, results/error_analysis_* and the figures. It came from an
+# earlier Optuna sweep whose trial-level output was not persisted at the time.
+#
+# results/best_hyperparameters.json is now committed (from the sweep in main.py, whose
+# trials are in results/optuna_trials.csv) and it names a slightly different rate:
+# 1.8346e-05 vs 1.8140e-05, a 1.1% relative difference. Because _load_best_hyperparameters
+# prefers the JSON, a re-run of this script trains at the NEW rate and will therefore
+# not reproduce the committed CSVs bit-for-bit.
+#
+# That is the correct default going forward — the committed sweep should win over a
+# literal — but it must be visible rather than silent, so the mismatch is warned about
+# below. For context on whether it matters: the two rates differ by 1.1%, while
+# re-training a single fixed configuration was measured to move gold PR-AUC by up to
+# 0.054 (see CLAUDE.md, replicate pairs in the 8-cell grid). The hyperparameter
+# difference is far inside that noise floor.
+# -----------------------------------------------------------------------------
+REPORTED_LR = 1.8140198244240376e-05      # produced the committed artifacts
+REPORTED_BATCH_SIZE = 16
+DEFAULT_LR = REPORTED_LR                  # fallback when no sweep JSON exists
+DEFAULT_BATCH_SIZE = REPORTED_BATCH_SIZE
 DEFAULT_EPOCHS = 3
 
 
 def _load_best_hyperparameters():
     path = os.path.join(cfg.RESULTS_DIR, "best_hyperparameters.json")
-    if os.path.exists(path):
-        with open(path) as f:
-            best = json.load(f).get("best_params", {})
-        lr = best.get("learning_rate", DEFAULT_LR)
-        bs = best.get("batch_size", DEFAULT_BATCH_SIZE)
-        print(f"Using swept hyperparameters from {path}: lr={lr:.3e}, batch_size={bs}")
-        return lr, bs
-    print(f"No sweep results found; using defaults lr={DEFAULT_LR:.3e}, bs={DEFAULT_BATCH_SIZE}")
-    return DEFAULT_LR, DEFAULT_BATCH_SIZE
+    if not os.path.exists(path):
+        print(f"No sweep results found; using the as-reported hyperparameters "
+              f"lr={DEFAULT_LR:.6e}, bs={DEFAULT_BATCH_SIZE}")
+        return DEFAULT_LR, DEFAULT_BATCH_SIZE
+
+    with open(path) as f:
+        best = json.load(f).get("best_params", {})
+    lr = best.get("learning_rate", DEFAULT_LR)
+    bs = best.get("batch_size", DEFAULT_BATCH_SIZE)
+    print(f"Using swept hyperparameters from {path}: lr={lr:.6e}, batch_size={bs}")
+
+    # Make any divergence from the as-reported configuration impossible to miss.
+    if abs(lr - REPORTED_LR) / REPORTED_LR > 1e-6 or bs != REPORTED_BATCH_SIZE:
+        print(
+            "\n  [!] PROVENANCE WARNING — this run will NOT reproduce the committed CSVs.\n"
+            f"      committed artifacts were trained at lr={REPORTED_LR:.6e}, bs={REPORTED_BATCH_SIZE}\n"
+            f"      this run will train at        lr={lr:.6e}, bs={bs}\n"
+            "      (relative lr difference: "
+            f"{abs(lr - REPORTED_LR) / REPORTED_LR:.2%})\n"
+            "      Set FSC_USE_REPORTED_HPARAMS=1 to pin the as-reported values instead.\n"
+        )
+        if os.getenv("FSC_USE_REPORTED_HPARAMS", "").lower() in {"1", "true", "yes"}:
+            print(f"      FSC_USE_REPORTED_HPARAMS set — pinning lr={REPORTED_LR:.6e}, "
+                  f"bs={REPORTED_BATCH_SIZE}.\n")
+            return REPORTED_LR, REPORTED_BATCH_SIZE
+
+    return lr, bs
 
 
 def main():

@@ -137,7 +137,8 @@ reproduces exactly that confusion.
 | [`results/`](results) | Every committed artifact: performance tables, `ground_truth_comparison.csv`, `label_quality.json`, the loss grid, topic-model sweep/topics/lift, error-analysis summaries and detail CSVs, PR and cost curves, run logs |
 | [`config/`](config) | [`settings.py`](config/settings.py) — paths, feature allow-list (leakage exclusions documented inline), loss variant, threshold, metric choices |
 | [`tests/`](tests) | [`test_losses.py`](tests/test_losses.py) — 9 tests over the three loss formulations |
-| [`slides/`](slides) | [`SLIDES_SKELETON.md`](slides/SLIDES_SKELETON.md) — presentation outline, each claim traced to a file in `results/` |
+| [`slides/`](slides) | **[`DECK.md`](slides/DECK.md) — the presentation** (Marp; 18 presented slides + Q&A appendix, every number traced to a file in `results/`), rendered to `deck.pdf` / `deck.html`. [`SLIDES_SKELETON.md`](slides/SLIDES_SKELETON.md) is the superseded planning outline. |
+| [`docs/reviews/`](docs/reviews) | Archived external review passes (`PROFESSOR_REVIEW*.md`) and `final_work_overview.md`, moved out of the repo root |
 
 Entry points at the root: [`main.py`](main.py) (Optuna sweep), [`analysis.py`](analysis.py) (final
 evaluation, produces every artifact in `results/`),
@@ -148,7 +149,7 @@ evaluation, produces every artifact in `results/`),
 
 ```bash
 pip install -r requirements.txt
-export WANDB_MODE=offline     # required: see the caveats below
+export WANDB_MODE=disabled    # optional — omit if you have a W&B account
 python verify_setup.py        # preflight — dependencies, data files, holdout integrity
 
 python analysis.py            # final evaluation: both models, both ground truths, all artifacts
@@ -158,17 +159,34 @@ python main.py                # optional Optuna hyperparameter sweep (8-12h on G
 pytest tests/                 # loss-function tests
 ```
 
-**Two known reproducibility gaps, documented rather than papered over:**
+Build the presentation (needs Node, no Python):
 
-- [`requirements.txt`](requirements.txt) is incomplete and stale. It is **missing
-  `sentencepiece`** (hard crash at DeBERTa tokenizer load), **`matplotlib`**, **`seaborn`** and
-  **`accelerate`** (`TrainingArguments` will refuse to construct), and it pins
-  `transformers==4.40.0` / `torch==2.2.2`, versions nobody on this project actually runs — the
-  code was developed and verified against transformers 4.57. Install the four missing packages
-  manually and ignore the pins.
-- **Weights & Biases is a hard dependency**: `report_to="wandb"` is hardcoded at
-  [`src/sota_model.py:187`](src/sota_model.py). Without `WANDB_MODE=offline` the run will block
-  on a login prompt.
+```bash
+npx @marp-team/marp-cli@latest slides/DECK.md -o slides/deck.pdf --allow-local-files
+npx @marp-team/marp-cli@latest -s slides/        # live preview at localhost:8080
+```
+
+**Both former reproducibility gaps are fixed as of 2026-07-28 — a clean clone now runs:**
+
+- ✅ [`requirements.txt`](requirements.txt) **rewritten.** It previously omitted `sentencepiece`
+  and `protobuf` (hard crash at DeBERTa tokenizer load), `accelerate` (`TrainingArguments`
+  refuses to construct), `matplotlib`, `seaborn` and `scipy` — and pinned
+  `transformers==4.40.0` / `torch==2.2.2`, versions nobody on this project ran. All six missing
+  packages are added, and the wrong exact pins are replaced by minimum floors, because *floors
+  that install beat pins that are precise and wrong*. The file documents the two-machine reality
+  (macOS/MPS for training, Windows/CPU for analysis) which is the known cause of the LDA
+  reproducibility caveat in §5.
+- ✅ **Weights & Biases is now optional.** `report_to` is resolved by `_report_to()` in
+  [`src/sota_model.py`](src/sota_model.py) and `main.py` guards its import and login, so a clone
+  with no W&B account degrades to local logging instead of blocking on a prompt. Set
+  `WANDB_MODE=disabled` to silence it entirely; the CSVs in `results/` are written either way.
+
+**One provenance caveat that is disclosed rather than fixed:** `results/best_hyperparameters.json`
+names lr `1.8346e-05`, while every committed artifact was trained at `1.8140e-05` (bs 16 matches) —
+a 1.1% difference, far inside the measured 0.054 gold-PR-AUC run-to-run noise floor. Because
+`analysis.py` prefers the committed sweep, a re-run will *not* reproduce the CSVs bit-for-bit; it
+prints a `PROVENANCE WARNING` saying so. Use `FSC_USE_REPORTED_HPARAMS=1` to pin the as-reported
+values.
 
 Raw Yelp JSON and `data/` are gitignored; `postprocessing/enriched_allergy_hazard_dataset.csv`,
 both gold sets and everything in `results/` are committed, so all reported numbers can be

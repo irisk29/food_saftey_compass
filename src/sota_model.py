@@ -1,4 +1,5 @@
 import inspect
+import os
 
 import numpy as np
 import torch
@@ -54,10 +55,23 @@ def compute_metrics(eval_pred):
     `pred_positive_rate` is reported deliberately: an all-positive model scores
     perfect recall, so the rate is the cheapest way to make that degenerate solution
     visible instead of flattering. It is logged every eval rather than only when
-    trouble is suspected — the deployed focal_asymmetric configuration does not
-    collapse (test-split flag rate 0.207), and the collapse seen historically under
-    the label-keyed pos_weight loss was never persisted to an artifact, so this column
-    is the evidence rather than the recollection.
+    trouble is suspected — and it has now earned its keep twice over:
+
+      * The deployed focal_asymmetric configuration does NOT collapse
+        (test-split flag rate 0.207), and the 8-cell grid refutes collapse at w=50
+        in either formulation (`collapsed=False` in all 8 rows,
+        results/grid_search_loss_variants.csv). So the weight does not cause it.
+      * But collapse is real and is now on disk. Optuna trial 1
+        (results/optuna_trials.csv: lr=3.80e-05, batch_size=4, focal_asymmetric@50)
+        went fully degenerate — `pred_positive_rate` 1.000, recall 1.000,
+        precision 0.200 (= the validation base rate), pr_auc 0.196 — and never
+        recovered across 4 epochs. The failure is an OPTIMISER instability at high
+        learning rate / tiny batch, not a property of the loss weight.
+
+    That trial is the empirical justification for CHECKPOINT_METRIC/HPO_METRIC:
+    bare `recall` would have ranked the degenerate trial FIRST of three (1.000 vs
+    0.9375 and 0.9125), while `pr_auc` ranked it last by a factor of five and `f2`
+    also rejected it. The a-priori argument against recall now has an artifact.
     """
     logits, labels = eval_pred
     probs = 1 / (1 + np.exp(-np.asarray(logits).flatten()))
@@ -96,6 +110,29 @@ def _build_training_args(**kwargs):
     key = "eval_strategy" if "eval_strategy" in accepted else "evaluation_strategy"
     kwargs[key] = strategy
     return TrainingArguments(**{k: v for k, v in kwargs.items() if k in accepted})
+
+
+def _report_to():
+    """
+    Where to send training logs.
+
+    W&B was previously hardcoded (`report_to="wandb"`), so a clean clone without a
+    Weights & Biases account crashed on the first training call — one of the two
+    clean-clone blockers in this repo (the other was the missing `sentencepiece` /
+    `accelerate` dependencies). Now it is opt-out: set WANDB_MODE=disabled or
+    WANDB_DISABLED=true and training runs with no external service at all.
+    """
+    if os.getenv("WANDB_MODE", "").lower() in {"disabled", "offline_disabled"}:
+        return "none"
+    if os.getenv("WANDB_DISABLED", "").lower() in {"1", "true", "yes"}:
+        return "none"
+    try:
+        import wandb  # noqa: F401
+    except ImportError:
+        print("    [warn] wandb not installed — training logs stay local "
+              "(report_to='none'). Set WANDB_MODE=disabled to silence this.")
+        return "none"
+    return "wandb"
 
 
 def _trainer_tokenizer_kwarg(tokenizer):
@@ -177,6 +214,14 @@ def run_sota_training(train_df, test_df, epochs=3, lr=2e-5, batch_size=8,
         eval_accumulation_steps=1,
         num_train_epochs=epochs,
         weight_decay=0.01,
+        # Made explicit rather than left to HuggingFace's default. The default IS 42
+        # and cfg.RANDOM_STATE IS 42, so this changes no committed number — but every
+        # run in this project silently used one fixed seed, which means the
+        # replicate spread we measured (up to 0.054 gold PR-AUC across four
+        # re-trained configurations) is non-determinism at a FIXED seed, i.e. a lower
+        # bound on true seed variance. Stating the seed here is what makes a
+        # multi-seed study a one-line change instead of an archaeology exercise.
+        seed=cfg.RANDOM_STATE,
         _eval_strategy="epoch",
         save_strategy="epoch",
         save_total_limit=1,
@@ -184,7 +229,7 @@ def run_sota_training(train_df, test_df, epochs=3, lr=2e-5, batch_size=8,
         load_best_model_at_end=True,
         metric_for_best_model=cfg.CHECKPOINT_METRIC,
         greater_is_better=True,
-        report_to="wandb",
+        report_to=_report_to(),
         fp16=False,  # FP16 on MPS can produce nan gradients on older macOS builds
     )
 

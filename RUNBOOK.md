@@ -142,7 +142,7 @@ on this list that fixes an actual incorrectness rather than adding a caveat.
   model, and say so before a grader notices.
 - **Deployment weight.** *"The deployment weight was fixed before the variant grid was run. The
   grid subsequently ranked two other configurations ahead of it on the gold holdout, by margins
-  (0.011 and 0.019 PR-AUC) smaller than the run-to-run discrepancy we measured for a single
+  (0.008 and 0.019 PR-AUC) smaller than the run-to-run discrepancy we measured for a single
   configuration (up to 0.054), so we report the grid rather than retrofit the deployment to it."*
 - **LDA is not reproducible across machines.** Re-running the fixed topic sweep in a
   second environment with the same seed produced different LDA fits (allergen lift 4.18 vs
@@ -151,12 +151,26 @@ on this list that fixes an actual incorrectness rather than adding a caveat.
   sentence in the write-up owning it — "we caught our own topic model being irreproducible
   and moved the headline claims to the algorithm that reproduces" reads as rigour, not
   weakness. Do **not** re-run the topic model expecting the old numbers back.
-- **Hyperparameter provenance.** No `optuna_trials.csv` or `best_hyperparameters.json`
-  exists, so `analysis.py` fell back to its hardcoded `lr=1.814e-05, bs=16` — values from
-  a sweep run *before* the metric fixes and the validation split. The results are clean
-  (evaluation never touched selection data); only the provenance is impure. Either run
-  Step 6 or add one sentence: *"hyperparameters were carried over from an earlier sweep;
-  the final configuration was re-trained and evaluated under the fixed protocol."*
+- ✅ **Hyperparameter provenance — RESOLVED 2026-07-28** (`441c436`). `results/optuna_trials.csv`
+  and `results/best_hyperparameters.json` are now committed: a 3-trial sweep, objective =
+  validation PR-AUC, loss fixed at `focal_asymmetric@50`, lr ∈ [1e-5, 5e-5] log, batch ∈ {4,8,16}.
+  Two things came out of it, and the second is a *result*, not housekeeping:
+  - **Provenance, with one caveat to disclose.** Best params: lr **1.8346e-05**, bs 16. The
+    committed artifacts were trained at lr **1.8140e-05** (bs 16 matches) — a 1.1% relative
+    difference, far inside the 0.054 gold-PR-AUC noise floor. But `analysis.py` prefers the JSON,
+    so a re-run now trains at the new rate and will **not** reproduce the committed CSVs. It
+    prints a PROVENANCE WARNING on mismatch; `FSC_USE_REPORTED_HPARAMS=1` pins the as-reported
+    values. Disclosure sentence: *"hyperparameters come from a 3-trial PR-AUC sweep
+    (`results/optuna_trials.csv`); the reported system was trained at lr 1.814e-05 from an
+    earlier sweep of the same space, a 1.1% difference well inside our measured run-to-run
+    noise."*
+  - 🔴 **The sweep caught a collapse, and bare recall would have selected it.** Trial 1
+    (lr=3.80e-05, bs=4) went all-positive: flag rate **1.000**, recall **1.000**, precision
+    **0.200** (= the base rate), PR-AUC **0.196**. Ranked by candidate objective: **recall picks
+    trial 1**; PR-AUC puts it last by 5×; F2 and F1 also reject it. The metric decision argued a
+    priori since V3 is now **measured**. Attribute the collapse to lr/batch, *not* to w=50 — the
+    grid shows `collapsed=False` at w=50 in both formulations. This belongs on Slide 8 and
+    replaces the deleted un-evidenced claim.
 - ✅ **Funnel wording — done.** `src/data_pipeline.py` and `verify_setup.py` now print "hazard
   rate within the keyword-screened funnel" instead of "hazard base rate".
 - Test-split numbers no longer need an "in-selection" footnote: checkpoint selection ran

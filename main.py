@@ -5,7 +5,6 @@ import os
 import optuna
 import pandas as pd
 import torch
-import wandb
 
 import config.settings as cfg
 from src.data_pipeline import load_and_split_data
@@ -15,6 +14,39 @@ from src.sota_model import run_sota_training, selection_disagreement
 # Prevent system warnings from cluttering training feedback logs
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
+
+
+# --------------------------------------------------------------------------------
+# Weights & Biases is optional. It used to be a hard `import wandb` + unconditional
+# `wandb.login()`, so a clean clone with no W&B account could not run the sweep at
+# all. Now the sweep degrades to local-only logging; the CSV in results/ is the
+# artifact that matters and it is written either way.
+#   Disable explicitly with:  WANDB_MODE=disabled
+# --------------------------------------------------------------------------------
+def _init_wandb():
+    if os.getenv("WANDB_MODE", "").lower() == "disabled" or \
+       os.getenv("WANDB_DISABLED", "").lower() in {"1", "true", "yes"}:
+        print("W&B disabled by environment — logging locally only.")
+        return None
+    try:
+        import wandb
+    except ImportError:
+        print("W&B not installed — logging locally only. "
+              "`pip install wandb` or set WANDB_MODE=disabled to silence this.")
+        return None
+    try:
+        wandb.login()
+        return wandb
+    except Exception as e:                                    # no key, no network, ...
+        print(f"W&B login failed ({e}) — continuing with local logging only.")
+        return None
+
+
+class _NullRun:
+    """Stand-in so the objective body needs no `if wandb` branches."""
+
+    def finish(self):
+        pass
 
 
 def main():
@@ -32,8 +64,8 @@ def main():
     # 1. Train and evaluate your traditional XGBoost baseline
     train_and_evaluate_baseline(train_df, test_df)
 
-    # Initialize your global Weights & Biases workspace session
-    wandb.login()
+    # Initialize the Weights & Biases session, if one is available at all.
+    wandb = _init_wandb()
 
     trial_records = []
 
@@ -49,7 +81,7 @@ def main():
             reinit=True,
             config={"learning_rate": suggested_lr, "batch_size": suggested_batch,
                     "loss_variant": cfg.LOSS_VARIANT, "asymmetric_weight": cfg.ASYMMETRIC_WEIGHT},
-        )
+        ) if wandb else _NullRun()
 
         try:
             trainer = run_sota_training(
@@ -68,11 +100,20 @@ def main():
             # PR-AUC, not recall. Recall alone is maximised by flagging every review,
             # so it cannot be a selection metric regardless of whether any particular
             # run degenerates — an all-positive model is unfalsifiable under it.
-            # (A collapse was observed historically under the label-keyed pos_weight
-            # loss, but it was never persisted to an artifact and the current
-            # focal_asymmetric loss at the deployed weight does not collapse, so no
-            # figures are quoted for it here.) PR-AUC is also threshold-free, so the
-            # hyperparameter search stays independent of our 0.20 operating point.
+            #
+            # This is no longer only an a-priori argument. THIS SWEEP CAUGHT ONE:
+            # results/optuna_trials.csv trial 1 (lr=3.80e-05, batch_size=4) collapsed
+            # to all-positive — pred_positive_rate 1.000, recall 1.000, precision
+            # 0.200 (= the validation base rate), pr_auc 0.196 — and stayed collapsed
+            # for all 4 epochs. Under `eval_recall` Optuna would have crowned it best
+            # of three; under `eval_pr_auc` it placed last by a factor of five.
+            # Note the attribution: the loss weight was focal_asymmetric@50 in every
+            # trial, and the 8-cell grid shows w=50 does NOT collapse at a tuned
+            # learning rate. So this is optimiser instability (high lr, tiny batch),
+            # not a pathology of the asymmetric loss.
+            #
+            # PR-AUC is also threshold-free, so the hyperparameter search stays
+            # independent of our 0.20 operating point.
             target_score = eval_metrics[f"eval_{cfg.HPO_METRIC}"]
 
             # Record what the alternative objectives would have picked, so the choice
@@ -89,7 +130,8 @@ def main():
                 record.update(disagreement)
             trial_records.append(record)
 
-            wandb.log(eval_metrics)
+            if wandb:
+                wandb.log(eval_metrics)
 
             print(f"    trial {trial.number}: pr_auc={eval_metrics.get('eval_pr_auc', float('nan')):.4f} "
                   f"f2={eval_metrics.get('eval_f2', float('nan')):.4f} "
@@ -132,16 +174,29 @@ def main():
         trials_df.to_csv(trials_path, index=False)
         print(f"\nTrial-level metrics saved to: {trials_path}")
 
-        # Would F2 have picked a different configuration than PR-AUC?
-        if "f2" in trials_df.columns:
-            by_pr = trials_df.sort_values("pr_auc", ascending=False).iloc[0]
-            by_f2 = trials_df.sort_values("f2", ascending=False).iloc[0]
-            print("\n--- Selection-metric comparison (across trials) ---")
-            print(f"  PR-AUC picks trial {int(by_pr['trial'])}: "
-                  f"lr={by_pr['learning_rate']:.2e} bs={int(by_pr['batch_size'])}")
-            print(f"  F2     picks trial {int(by_f2['trial'])}: "
-                  f"lr={by_f2['learning_rate']:.2e} bs={int(by_f2['batch_size'])}")
-            print(f"  Agree: {int(by_pr['trial']) == int(by_f2['trial'])}")
+        # Which selection metric would have picked which configuration? `recall` is
+        # included on purpose: it is the metric this project REJECTED, and showing
+        # what it would have chosen is the cheapest possible evidence for that
+        # decision. On the committed sweep, recall picks the degenerate trial.
+        print("\n--- Selection-metric comparison (across trials) ---")
+        for metric in ("pr_auc", "f2", "f1", "recall"):
+            if metric not in trials_df.columns:
+                continue
+            win = trials_df.loc[trials_df[metric].idxmax()]
+            flag = ""
+            if "pred_positive_rate" in trials_df.columns and win["pred_positive_rate"] > 0.95:
+                flag = "   <-- DEGENERATE (flags everything)"
+            print(f"  {metric:7s} picks trial {int(win['trial'])}: "
+                  f"lr={win['learning_rate']:.2e} bs={int(win['batch_size'])} "
+                  f"flag_rate={win.get('pred_positive_rate', float('nan')):.3f}{flag}")
+
+        # Collapse alarm, stated loudly rather than buried in a column.
+        if "pred_positive_rate" in trials_df.columns:
+            degenerate = trials_df[trials_df["pred_positive_rate"] > 0.95]
+            if not degenerate.empty:
+                print(f"\n  [!] {len(degenerate)} of {len(trials_df)} trials collapsed to "
+                      f"all-positive. Trials: {sorted(degenerate['trial'].astype(int))}. "
+                      f"This is why the objective is {cfg.HPO_METRIC}, not recall.")
 
     best = {
         "objective_metric": cfg.HPO_METRIC,

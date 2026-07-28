@@ -95,12 +95,18 @@ techniques work/fail, tied to the business problem = 90–100.
     verified to have **zero overlap** with the enriched dataset. This is the set to report on.
 - Selection metrics are now F2 (checkpoint) and PR-AUC (hyperparameter search); bare recall was
   removed because an all-positive model maximises it by definition (regression-guarded in
-  `tests/test_losses.py`) — that reason is sound a priori and stands on its own. The all-positive
-  collapse itself was observed historically under the label-keyed `pos_weight` loss but was never
-  written to an artifact, and the 8-cell grid has now **positively refuted** it under the current
-  protocol: nothing collapses at w=50 in either formulation (`pos_weight@50` flag rate 0.1967,
-  `focal_asymmetric@50` 0.1858, `collapsed=False` in all 8 rows). Do not quote the collapse as a
-  measurement anywhere; cite the grid and state that w=50 does not degenerate.
+  `tests/test_losses.py`) — that reason is sound a priori and stands on its own. **As of
+  2026-07-28 it is also measured.** See the Optuna section below: `results/optuna_trials.csv`
+  trial 1 collapsed to all-positive, and bare recall would have ranked it *first of three*.
+  The two collapse facts are separate and must not be conflated:
+  - **The loss weight does not cause collapse.** The 8-cell grid positively refutes it —
+    nothing degenerates at w=50 in either formulation (`pos_weight@50` flag rate 0.1967,
+    `focal_asymmetric@50` 0.1858, `collapsed=False` in all 8 rows).
+  - **The optimiser can.** At lr=3.80e-05 with batch_size=4 (loss held at
+    `focal_asymmetric@50`) the model went to flag-rate 1.000. Collapse is a high-learning-rate /
+    tiny-batch instability, not a property of the asymmetric loss.
+  The old instruction "do not quote the collapse as a measurement" is now **retired** — quote
+  `results/optuna_trials.csv` trial 1, and attribute it to the learning rate, not the weight.
 - The heuristic's 97.9% recall is measured *inside* an already keyword-filtered dataset, so it
   is circular and optimistic. The holdout set gives the honest estimate.
 
@@ -114,6 +120,50 @@ Build a comparison of text-mining approaches, not a single classifier:
 3. **Fine-tuned transformer** — ✅ DeBERTa-v3-base (`src/sota_model.py`), asymmetric loss
    + lowered threshold, Optuna-tuned on PR-AUC. Course technique #1.
 4. **Topic modeling (LDA/NMF)** — ✅ `src/topic_model.py`. Course technique #2.
+
+### Hyperparameter sweep findings (results/optuna_trials.csv, results/best_hyperparameters.json)
+Committed **2026-07-28** (`441c436`). This closes the "no hyperparameter provenance" gap that
+every review from V3 onward had flagged, and it delivered one result worth more than the
+provenance itself.
+
+3 Optuna trials, objective = **validation PR-AUC**, 4 epochs, loss held fixed at
+`focal_asymmetric @ w=50`, search space lr ∈ [1e-5, 5e-5] (log), batch ∈ {4, 8, 16}:
+
+| Trial | lr | batch | val PR-AUC | F2 | recall | precision | flag rate |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 0 | 1.835e-05 | 16 | **0.9877** | 0.9163 | 0.9125 | 0.9319 | 0.196 |
+| 2 | 1.291e-05 | 8 | 0.9876 | **0.9352** | 0.9375 | 0.9259 | 0.203 |
+| 1 | 3.798e-05 | 4 | **0.1960** | 0.5556 | **1.0000** | 0.2000 | **1.000** |
+
+- 🔴 **The headline: trial 1 collapsed, and bare recall would have selected it.** Flag rate
+  1.000, recall 1.000, precision 0.200 (exactly the validation base rate), PR-AUC 0.196 — a
+  textbook all-positive degenerate model. It never recovered; its best epoch reached PR-AUC
+  0.643 against 0.988 for the two stable trials. Ranking the three trials by each candidate
+  objective: **`recall` picks the collapsed trial 1**; `pr_auc` picks trial 0 and puts trial 1
+  last by a factor of five; `f2` and `f1` pick trial 2 and also reject trial 1. The decision to
+  drop bare recall as a selection metric — argued a priori since V3 and regression-guarded in
+  `tests/test_losses.py` — now has a **committed artifact showing the failure it prevents**.
+  `main.py` prints this comparison (including recall) and a collapse alarm on every sweep.
+- **Attribute the collapse to the optimiser, not the loss.** Every trial used
+  `focal_asymmetric @ 50`; only the trial at the highest lr (3.8e-05) and smallest batch (4)
+  degenerated. Combined with the grid's `collapsed=False` at w=50 in both formulations, the two
+  artifacts are consistent and mutually explanatory: **the weight is safe, the learning rate is
+  not.** Never say "w=50 collapses".
+- **The two selection metrics disagree, within and across runs.** `metrics_agree = False` in all
+  three trials (F2 and PR-AUC pick different epochs), and across trials PR-AUC picks trial 0
+  while F2 picks trial 2. Both reject the degenerate model; they differ only among the healthy
+  ones, and the gap between trial 0 and trial 2 on PR-AUC is 0.00005 — noise. Report the
+  disagreement as evidence the choice of metric was deliberate, not as a defect.
+- ⚠️ **Provenance caveat — the sweep's best lr is NOT the lr that produced the reported system.**
+  `best_hyperparameters.json` names lr **1.8346e-05**; every committed artifact in
+  `results/performance_*`, `results/error_analysis_*` and the figures was trained at
+  **1.8140e-05** (from an earlier sweep whose trials were not persisted). A 1.1% relative
+  difference, far inside the measured 0.054 gold-PR-AUC noise floor — but `analysis.py` prefers
+  the JSON, so a re-run would *not* reproduce the committed CSVs. `analysis.py` now prints a
+  PROVENANCE WARNING on mismatch, and `FSC_USE_REPORTED_HPARAMS=1` pins the as-reported values.
+  Batch size 16 matches. Disclose this in one sentence; do not silently re-run.
+- Only **3 trials** — small, and the sweep varied lr and batch size only (not epochs, weight
+  decay or warmup). Say "3-trial sweep", never "tuned".
 
 ### Loss-variant grid findings (results/grid_search_loss_variants.csv)
 The signature contribution is the `AsymmetricSafetyLoss`, so it needs a head-to-head. As of

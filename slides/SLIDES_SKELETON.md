@@ -1,3 +1,20 @@
+> ## ⚠️ SUPERSEDED — build from [`DECK.md`](DECK.md)
+>
+> **2026-07-28:** the full deck is written. `DECK.md` is a complete, speaker-ready
+> 16-slide Marp deck with every number verified against a committed artifact, presenter
+> notes, an 11-question Q&A back-pocket, a figure-export checklist and rehearsal timings.
+>
+> ```
+> npx @marp-team/marp-cli@latest slides/DECK.md -o deck.pdf     # or -o deck.pptx
+> npx @marp-team/marp-cli@latest -s slides/                     # live preview
+> ```
+>
+> This skeleton is kept for its planning rationale only. Where the two disagree,
+> **`DECK.md` wins** — notably Slide 8, whose guidance below is now out of date (see the
+> note inline). Do not build slides from this file.
+
+---
+
 # Slide Skeleton — Food Safety Compass (≤15 min, presentations 2026-08-03)
 
 *One slide ≈ 60–70 seconds. 13 content slides ≈ 14 min with a fast open and close.
@@ -57,8 +74,17 @@ Every number on a slide must trace to a file in `results/` or `labeling/` — th
 - Evidence: `src/losses.py`, `src/sota_model.py`, `tests/test_losses.py`
 
 ## Slide 8 — Act III: the metric that selects a broken model
-- ⚠️ **Do NOT claim the w=50 collapse as a measurement.** It was an un-persisted historical observation, and the 8-cell grid has since **refuted it**: nothing collapses at w=50 in either formulation (`collapsed=False` in all 8 rows; `pos_weight@50` flag rate 0.197, recall 0.921, precision 0.936). The old "100% recall / 37.5% precision" figures have no artifact behind them — delete them.
-- The argument that survives, and it is sound on its own: **bare recall is maximised by a constant all-positive answer**, so it cannot be a selection metric — *a priori*, no experiment needed
+- 🔄 **THIS SLIDE'S GUIDANCE IS OUT OF DATE — see `DECK.md` slide 9.** The Optuna sweep committed
+  on 2026-07-28 (`results/optuna_trials.csv`) **produced a real collapse**: trial 1
+  (lr=3.80e-05, bs=4) hit flag rate 1.000, recall 1.000, precision 0.200, PR-AUC 0.196. And bare
+  recall would have ranked it **first of three**, while PR-AUC ranked it last by 5×. The slide is
+  now a measurement, not an a-priori argument.
+- ⚠️ Still true and still essential: **the collapse is NOT caused by w=50.** All three trials used
+  `focal_asymmetric@50`, and the grid shows `collapsed=False` at w=50 in both formulations
+  (`pos_weight@50` flag rate 0.197, recall 0.921, precision 0.936). Attribute it to the learning
+  rate and batch size. The old "100% recall / 37.5% precision" figures remain unsourced — deleted.
+- The a-priori argument still opens the slide: **bare recall is maximised by a constant all-positive
+  answer**, so it cannot be a selection metric — and now we can show what that costs.
 - Fix: checkpoint by **F2**, hyperparameter search by **PR-AUC**, log flag-rate as a collapse alarm — and `tests/test_losses.py` has a regression guard asserting an all-positive model is caught by F2/PR-AUC/flag-rate
 - One-liner: *"any metric you can maximize with a constant answer is not a safety metric"*
 - Evidence: `config/settings.py` (CHECKPOINT_METRIC/HPO_METRIC), `tests/test_losses.py`, `results/grid_search_loss_variants.csv`
@@ -101,7 +127,7 @@ Every number on a slide must trace to a file in `results/` or `labeling/` — th
 ## Q&A back-pocket (not presented — rehearse answers)
 1. "Is your asymmetric loss just class weighting?" → the `pos_weight` variant is, exactly, and we say so; `focal_asymmetric` is error-dependent. The grid compares those two across 4 weights (8 cells). **`fn_gated` is implemented and unit-tested but was never run** — say that, don't imply it was.
 2. "46% hazard rate — really?" → funnel rate, 100% of holdout passes the keyword screen; strong-tier 71.5% vs weak-tier 21.4%; population ~2–5%.
-3. "Why w=50 when your cost ratio implies 100:1?" → the weight was fixed before the grid ran. The grid then ranked two configs ahead of it on gold, by 0.011 and 0.019 PR-AUC — both smaller than our measured run-to-run discrepancy (up to 0.054), so we report the grid rather than retrofit the deployment to it.
+3. "Why w=50 when your cost ratio implies 100:1?" → the weight was fixed before the grid ran. The grid then ranked two configs ahead of it on gold, by 0.008 (`pos_weight@1`) and 0.019 (`focal@15`) PR-AUC — both smaller than our measured run-to-run discrepancy (up to 0.054), so we report the grid rather than retrofit the deployment to it.
 4. "Test set used for selection?" → no. Checkpoint selection ran on the **validation** split, so the heuristic test-split numbers are out-of-selection; the gold holdout never touched selection at all.
 5. "Only 772 holdout rows?" → recall CI ±3–4 pts at n_pos=355; adequate, and labeling is resumable.
 6. "Why no word/doc embeddings?" → chose topic modeling as technique #2 because it answers research question 2 (hazard-type discovery); embeddings answer neither question better than DeBERTa already does.
@@ -113,6 +139,8 @@ Every number on a slide must trace to a file in `results/` or `labeling/` — th
 - [x] Run `analysis.py` → fills Slides 9, 12 (+ final numbers on 13)
 - [x] NPMI fix + topic rerun → refresh coherence numbers on Slide 10
 - [x] Full 8-cell loss grid, all gold-scored → rebuild Slide 8 and add the two new slides it earned
+- [x] **Full deck written** → `DECK.md` (16 slides, all numbers artifact-verified, Q&A + notes)
+- [x] **NEW Slide — the Optuna collapse:** bare recall would have selected the degenerate trial
 - [ ] **NEW Slide — saturation:** validation spread 0.0030 across 8 configs vs gold spread 0.0992 (**33×**), and **Spearman ρ = −0.24** between the two ground truths. Line: *"we built an evaluation set because we could not tell our own models apart without one."*
 - [ ] **NEW Slide — what the loss actually does:** gold PR-AUC vs w for both variants. `pos_weight` declines monotonically (0.8096 → 0.7956 → 0.7905 → 0.7219, range 0.088); `focal_asymmetric` is non-monotone in a band half as wide (range 0.043). Claim: **robustness to a hyperparameter, not peak performance.** Include the noise-floor caveat on the same slide.
 - [ ] Figures to export: confusion 2×2 (S4), FP-bucket bar chart (S5), contamination diagram (S6), dual-ground-truth table (S9), lift table heat-strip (S11), weight-response curve (new)

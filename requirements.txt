@@ -1,12 +1,60 @@
-transformers==4.40.0
-datasets==2.19.0
-xgboost==2.0.3
-optuna==3.6.1
-wandb==0.16.6
-scikit-learn==1.4.2
-pandas==2.2.2
-numpy
-nltk==3.8.1
-python-dotenv==1.0.1
-torch==2.2.2
-requests==2.32.5
+# Food Safety Compass — dependencies
+#
+# PROVENANCE / REPRODUCIBILITY NOTE (read this before quoting a version).
+# This project ran across two machines and they did NOT hold identical stacks:
+#   * Training machine  — macOS / Apple Silicon (`DEVICE = "mps"`). Produced every
+#     trained checkpoint: the Optuna sweep (results/optuna_trials.csv), the 8-cell
+#     loss grid (results/grid_search_loss_variants.csv) and the reported system
+#     (results/performance_*.csv).
+#   * Analysis machine  — Windows / CPU-only torch. Produced the re-bucketing, the
+#     hand-read FN audit and the figures.
+# The versions below are minimum floors, not the exact set used on either machine.
+# We deliberately do NOT pin exact versions we never tested together: the previous
+# revision of this file pinned transformers==4.40.0 / torch==2.2.2 / scikit-learn==1.4.2,
+# none of which matched the environment that produced the committed numbers. Floors
+# that install and run beat pins that are precise and wrong.
+#
+# This version skew is not cosmetic — it is the documented cause of the LDA
+# reproducibility caveat in CLAUDE.md (identical code + data + seed, different LDA
+# fits across the two machines). NMF (deterministic `nndsvda` init) reproduces
+# exactly, which is why NMF numbers are the headline topic results.
+
+# --- Core modelling -----------------------------------------------------------
+torch>=2.2
+transformers>=4.40
+# REQUIRED by transformers.Trainer. Its absence was a hard crash on a clean clone.
+accelerate>=0.21
+datasets>=2.19
+
+# --- DeBERTa-v3 tokenizer -----------------------------------------------------
+# `microsoft/deberta-v3-base` ships a SentencePiece model. Without these two,
+# a clean clone dies at `AutoTokenizer.from_pretrained(...)` before any training
+# starts — this was the single biggest reproducibility defect in the repo.
+sentencepiece>=0.1.99
+protobuf>=3.20
+
+# --- Classical ML / baseline --------------------------------------------------
+scikit-learn>=1.4
+xgboost>=2.0
+numpy>=1.26
+pandas>=2.2
+scipy>=1.11
+
+# --- Hyperparameter search & tracking -----------------------------------------
+optuna>=3.6
+# W&B is optional at runtime: set WANDB_MODE=disabled (or WANDB_DISABLED=true) to
+# run without an account. See src/sota_model.py, which reads WANDB_MODE and falls
+# back to report_to="none".
+wandb>=0.16
+
+# --- Text features ------------------------------------------------------------
+# VADER lexicon is downloaded on first use by src/features.py.
+nltk>=3.8
+
+# --- Figures ------------------------------------------------------------------
+matplotlib>=3.8
+seaborn>=0.13
+
+# --- Misc ---------------------------------------------------------------------
+python-dotenv>=1.0
+requests>=2.32
