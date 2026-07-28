@@ -101,7 +101,8 @@ def main():
         df = pd.read_csv(cfg.GOLD_HOLDOUT_PATH)
         if len(df) < 300:
             raise RuntimeError(f"only {len(df)} rows - resume the labelling run before evaluating")
-        return f"{len(df)} rows, hazard base rate {df['llm_is_hazard'].mean():.1%}"
+        return (f"{len(df)} rows, hazard rate within the keyword-screened funnel "
+                f"{df['llm_is_hazard'].mean():.1%}")
     check("gold holdout set", gold_holdout)
 
     # ---- 4. Contamination ------------------------------------------------

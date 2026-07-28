@@ -95,10 +95,12 @@ techniques work/fail, tied to the business problem = 90–100.
     verified to have **zero overlap** with the enriched dataset. This is the set to report on.
 - Selection metrics are now F2 (checkpoint) and PR-AUC (hyperparameter search); bare recall was
   removed because an all-positive model maximises it by definition (regression-guarded in
-  `tests/test_losses.py`). The all-positive collapse was observed historically under the
-  label-keyed `pos_weight` loss but was never written to an artifact, and the deployed
-  `focal_asymmetric` model at w=50 does *not* collapse (test-split flag rate 0.207) — so the
-  collapse should be described as an un-persisted observation, not quoted as a measurement.
+  `tests/test_losses.py`) — that reason is sound a priori and stands on its own. The all-positive
+  collapse itself was observed historically under the label-keyed `pos_weight` loss but was never
+  written to an artifact, and the 8-cell grid has now **positively refuted** it under the current
+  protocol: nothing collapses at w=50 in either formulation (`pos_weight@50` flag rate 0.1967,
+  `focal_asymmetric@50` 0.1858, `collapsed=False` in all 8 rows). Do not quote the collapse as a
+  measurement anywhere; cite the grid and state that w=50 does not degenerate.
 - The heuristic's 97.9% recall is measured *inside* an already keyword-filtered dataset, so it
   is circular and optimistic. The holdout set gives the honest estimate.
 
@@ -115,28 +117,52 @@ Build a comparison of text-mining approaches, not a single classifier:
 
 ### Loss-variant grid findings (results/grid_search_loss_variants.csv)
 The signature contribution is the `AsymmetricSafetyLoss`, so it needs a head-to-head. As of
-2026-07-27 the committed grid has **4 rows only**: `{pos_weight, focal_asymmetric}` x `{w=1.0,
-w=15.0}`, scored on the validation split against the heuristic keyword label.
-- **The metric is saturated.** PR-AUC spans 0.9818–0.9882 across all four — a spread of 0.0065,
-  well inside single-seed noise. Reproducing a keyword+stars rule is an easy problem, so every
-  configuration sits at ceiling and the table cannot rank them. For contrast, the same
-  architecture scores PR-AUC 0.804 on the gold LLM holdout (XGBoost baseline: 0.728) — that is
-  where models actually differ.
-- **The unweighted control currently leads.** Best PR-AUC is `pos_weight @ w=1.0` (0.9882), i.e.
-  no asymmetric weighting at all; best F2 is `pos_weight @ w=15.0` (0.9307). Given the spread,
-  the honest statement today is that **the custom loss has no demonstrated benefit** over the
-  control. Say this in the write-up rather than around it — the rubric rewards knowing why a
-  technique fails, and "the comparison was run and did not separate" is a real finding.
-- **The deployed configuration was never in the grid.** Every headline number comes from
-  `focal_asymmetric, w=50, gamma=2.0` (`results/analysis_run.log:63`); w=50 and the `fn_gated`
-  variant have not been run at all. `grid_search_analysis.py` now force-includes the deployed
-  config (`--no-force-deployed` opts out) and resumes rather than redoing the 4 finished cells.
-- **Gold-holdout scoring added** to make the comparison meaningful: every cell is now also
-  scored on the fresh LLM-labelled holdout (`gold_*` columns) and the summary sorts on
-  `gold_pr_auc`, falling back to validation PR-AUC only when the gold set is absent. The 4
-  existing rows have blank gold cells — **not measured, not zero** — until they are re-run.
-- No collapse anywhere in the committed evidence: `collapsed` is False in all 4 rows and the
-  max flag rate is 0.198.
+**2026-07-28** the committed grid is complete: **8 rows** — `{pos_weight, focal_asymmetric}` x
+`{w=1, 5, 15, 50}` — every one re-trained from scratch under `--force`, **all at 3 epochs**
+(900 optimiser steps, verified from `results/grid_search.log`), and **all scored on both ground
+truths**. The earlier mixed 2-/3-epoch table is superseded and its numbers are void.
+- **The heuristic metric is saturated and, worse, uninformative.** Validation PR-AUC spans
+  0.9864–0.9894 across all eight — a spread of **0.0030**. On the gold holdout the same eight
+  span 0.7219–0.8211 — a spread of **0.0992, 33× larger**. The decisive statistic is the rank
+  correlation between the two ground truths: **Spearman ρ = −0.24** (Pearson −0.36). The
+  validation ranking does not merely have low resolution; it carries no information about
+  out-of-sample ordering. This is the strongest methodological result in the project.
+- **Run-to-run noise is large and must be quoted.** Four configurations have now been trained
+  twice under nominally identical settings. Three reproduced to within 0.006 gold PR-AUC; one
+  (`pos_weight@5`) moved **0.054** — over half the entire between-configuration spread. Both of
+  its runs selected the epoch-2 checkpoint, so this is not a selection flip; the trajectories
+  diverged by epoch 1 and the cause is unattributed (most likely non-deterministic MPS kernels).
+  **Treat gold gaps below ~0.05 as unresolved.** Note also that no `seed=` is passed to
+  `TrainingArguments`, so every run uses the HuggingFace default of 42 — the 0.054 is
+  non-determinism at a *fixed* seed and is a lower bound on true seed variance.
+- **What the variants actually do — report the shape, not a ranking.** Across w = 1, 5, 15, 50
+  the gold PR-AUC of `pos_weight` is 0.8096, 0.7956, 0.7905, 0.7219: a **monotone decline**,
+  range 0.0877. `focal_asymmetric` gives 0.7913, 0.7781, 0.8211, 0.8021: **non-monotone**, range
+  0.0430. A uniform penalty on every positive degrades out-of-sample ranking as it grows; the
+  focal penalty decays as `(1-p)^gamma` and stops responding to the weight. The defensible claim
+  is **the custom loss buys insensitivity to a hyperparameter, not peak performance** — and lead
+  with monotone-vs-non-monotone, which does not depend on the noise estimate. Do not quote the
+  old "7x less sensitive"; do not quote the endpoint-only "8x" either (it ignores the two middle
+  points where the focal curve actually moves).
+- **The deployed configuration is now in the grid and reproduces.** `focal_asymmetric @ w=50`
+  has been trained three times across two independent code paths, scoring gold PR-AUC 0.7961
+  (grid, 27 Jul), 0.8021 (grid, 28 Jul) and 0.8045 (`analysis.py`, the reported system) — a
+  range of 0.0084. It ranks 3rd of 8 on gold PR-AUC, 0.019 behind `focal_asymmetric@15`, i.e.
+  well inside the noise floor. **Do not switch the deployed config**; disclose the ordering and
+  the margin instead.
+- **Fixed-threshold metrics disagree with PR-AUC, for a knowable reason.** Gold F2@0.20 and risk
+  cost@0.20 both crown `focal_asymmetric@5`, which flags **75.0%** of the holdout; under a 100:1
+  cost ratio and a recall-weighted F2, over-flagging is nearly free. Select on PR-AUC, then
+  re-tune the threshold per model.
+- **The 0.20 threshold does not transfer across ground truths.** Gold flag rates run 0.659–0.750
+  against a 46.0% funnel hazard rate, while the same models flag 0.186–0.208 on validation. Gold
+  precision is 0.57–0.63 for every configuration. The threshold was chosen against the heuristic
+  label and is miscalibrated on the real distribution — another instance of the central thesis.
+- **No collapse anywhere.** `collapsed` is False in all 8 rows on both ground truths; max
+  validation flag rate 0.2075. `pos_weight @ w=50` — the exact configuration the old docs claimed
+  degenerated to all-positive — sits at flag rate 0.1967, recall 0.921, precision 0.936. The
+  collapse claim is now positively refuted, not merely unevidenced.
+- The `fn_gated` variant has still never been run.
 
 ### Topic-modeling findings so far (results/topic_model_*.csv)
 All numbers below are from the committed artifacts (regenerated 2026-07-27 after the
@@ -163,6 +189,34 @@ were an artifact of that bug and are void).
   dominant `food_poisoning` mass (69% of the validated set). Report this as "the
   technique finds the rare, lexically-distinct hazard type and fails on the common,
   lexically-diffuse one" — that is the *why* the rubric rewards.
+
+### Error-analysis findings (results/error_analysis_*, results/gold_fn_handread.*)
+Regenerated 2026-07-28 after widening `NEGATED_HAZARD` to cover the contracted negations
+(`haven't/hasn't/hadn't/don't/doesn't/isn't/aren't/nobody/none`). Re-bucketing runs without
+retraining via `analysis/rebucket_errors.py`, which reloads full review text — the detail CSVs
+store only a 400-char excerpt — and reconstructs predictions from the recorded FP/FN indices.
+- **The model inherits its teacher's blind spots.** **65%** of DeBERTa's 197 gold false positives
+  sit in the labelling rule's own top two failure modes: 32.5% `illness_mentioned_not_caused_here`
+  + 32.0% `neutral_allergen_mention`. Tracing model errors back to label pathology is the
+  strongest analytical move in the project. *(Was 66% / 34% + 32% before the regex fix, which
+  moved 9 FPs — 4 on gold into `negated_hazard`.)*
+- **`unexplained_fn` was a taxonomy defect, not a data mystery.** 17 of the 23 residual gold FNs
+  *do* contain an `EXPLICIT_HAZARD`/`ILLNESS_WORD` term, but every FN rule is conditioned on
+  `not has_explicit`, so a short low-starred review with a clear hazard word matches nothing and
+  falls through. Frame it as auditing our own error taxonomy.
+- **All 23 are now hand-named** (`results/gold_fn_handread.md`), so "59% unexplained" → 0%: five
+  each of `implicit_hazard`, `second_hand_report`, `contamination_novel_phrasing` (real
+  contamination phrased outside the rule's vocabulary) and `label_questionable`, plus 2
+  `explicit_hazard_missed` and 1 `mild_or_hedged`.
+- ⚠️ **The 256-token truncation hypothesis is refuted — do not quote it.** Measured with the real
+  `DebertaV2TokenizerFast` at `max_length=256`: only **1 of 23** has its hazard cue past the
+  window, only 2 of 23 exceed 256 tokens at all, and the median cue position is token **39**.
+- **5 of 23 gold labels are arguable** at LLM confidence *high* (slip-and-fall, steak-doneness
+  mix-up, flavour revulsion read as illness). Ground truth #2 is independent, not infallible —
+  state this yourself.
+- In 5 cases the only hazard keyword is a **disgust idiom** ("made me want to VOMIT") while the
+  real hazard has no keyword; the idiom then suppresses `contamination_no_illness` via its
+  `ILLNESS_WORD` guard.
 
 ## Working notes
 - Large data files are gitignored; raw Yelp JSON is not committed.

@@ -8,17 +8,17 @@ Failure modes are assigned by the rule set in `analysis/error_analysis.py`. Each
 
 | Failure mode | Count | Share | Mean words |
 |---|---:|---:|---:|
-| `illness_mentioned_not_caused_here` | 66 | 34% | 164 |
+| `illness_mentioned_not_caused_here` | 64 | 32% | 160 |
 | `neutral_allergen_mention` | 63 | 32% | 203 |
-| `generic_complaint_no_hazard` | 23 | 12% | 136 |
-| `unexplained_fp` | 23 | 12% | 232 |
-| `negated_hazard` | 13 | 7% | 214 |
+| `generic_complaint_no_hazard` | 22 | 11% | 139 |
+| `unexplained_fp` | 22 | 11% | 232 |
+| `negated_hazard` | 17 | 9% | 217 |
 | `secondhand_or_hearsay` | 4 | 2% | 298 |
 | `hyperbole_or_slang` | 3 | 2% | 258 |
 | `strong_negative_sentiment_only` | 1 | 0% | 60 |
 | `unpleasant_not_unsafe` | 1 | 0% | 233 |
 
-### `illness_mentioned_not_caused_here` — 66 cases
+### `illness_mentioned_not_caused_here` — 64 cases
 
 Illness vocabulary with no causal link to this meal — 'picking up food for a sick friend', 'I was sick that week so I craved soup'. The keyword rule cannot represent causation at all, only co-occurrence, so every one of these is guaranteed to be mislabelled. A contextual model should beat the label here, which means these cases are where the model looks *wrong* while actually being right.
 
@@ -34,7 +34,7 @@ Allergen vocabulary used as a neutral factual note ('they have a gluten-free men
 - Hoe excited was i to find a gluten free vegan pizza (up charge) option. Staff was super accommodating and courteous. When ordering gluten free it is common to be asked Allergy or Preferance. But when i get down the line to add my toppings they actually switched gloves to prevent … (p=0.995)
 - Today we went to Semenza's because my mom remembers this as being awesome when she worked for the school around the corner. They seemed to have good deals and it is a cute pizzeria style business. But that is about where it ends sorry to say. We went inside and waited. And waited… (p=0.995)
 
-### `generic_complaint_no_hazard` — 23 cases
+### `generic_complaint_no_hazard` — 22 cases
 
 An ordinary bad review with no hazard vocabulary whatsoever. If the model flags these, it is reading general negativity as danger — check whether the star gate in the label taught it that.
 
@@ -42,7 +42,7 @@ An ordinary bad review with no hazard vocabulary whatsoever. If the model flags 
 - When you're on a time crunch, the last thing you need is a slow moving line in a fast food drive-through. As we inched through this particular Steak 'n Shake, we all immediately regretted our decision on choosing this place. Due to being squeezed between two other vehicles, we we… (p=0.395)
 - Nice clean store with great selection of organics. People at the register are always friendly too and love that their bakery super careful about cross contamination when it comes to peanuts...at least so they say when I expressed the concern.… (p=0.989)
 
-### `unexplained_fp` — 23 cases
+### `unexplained_fp` — 22 cases
 
 No rule matched — requires manual review.
 
@@ -50,7 +50,7 @@ No rule matched — requires manual review.
 - Finding a good restaurant with vegan options in a new town can be difficult. Siam Elephant was intriguing and within walking distance from our hotel, so we decided to give it a try. Siam Elephant is a Thai restaurant, which raised some concerns for me as someone with severe peanu… (p=0.995)
 - Disability Accomodations at the Royal Senesta Hotel, New Orleans. June 2011 Disabilities come in all shapes and sizes. Most people think in terms of the well known and visible conditions, such as mobility issues, deafness, blindness... But there are many more little known conditi… (p=0.259)
 
-### `negated_hazard` — 13 cases
+### `negated_hazard` — 17 cases
 
 A hazard term inside a negation scope ('never got sick here'). Bag-of-words baselines cannot represent negation at all; a transformer can in principle, so residual errors here indicate the fine-tune did not have enough negated examples to learn it.
 

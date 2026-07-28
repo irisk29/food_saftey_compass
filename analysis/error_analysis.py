@@ -35,8 +35,16 @@ NEUTRAL_ALLERGEN = re.compile(
     r"(?:my|her|his|their)\s+(?:\w+\s+)?allerg(?:y|ies))\b",
     re.IGNORECASE)
 
+# The cue list must cover the contracted negations, not just `didn't`: "haven't been sick
+# here once" is the same phenomenon as "didn't get sick" and was previously falling through
+# to `unexplained_*`. Only the cue alternation is widened — the hazard vocabulary, the
+# 40-character window and every downstream bucket rule are unchanged.
 NEGATED_HAZARD = re.compile(
-    r"\b(?:no|not|never|didn'?t|did\s+not|wasn'?t|weren'?t|without|avoided|luckily|thankfully)\b"
+    r"\b(?:no|not|never|nobody|no\s+one|none|"
+    r"didn'?t|did\s+not|don'?t|do\s+not|doesn'?t|does\s+not|"
+    r"haven'?t|have\s+not|hasn'?t|has\s+not|hadn'?t|had\s+not|"
+    r"wasn'?t|was\s+not|weren'?t|were\s+not|isn'?t|is\s+not|aren'?t|are\s+not|"
+    r"without|avoided|luckily|thankfully)\b"
     r"[^.!?]{0,40}?\b(?:sick|ill|allergic|reaction|poison\w*|vomit\w*|hospital|contaminat\w*)\b",
     re.IGNORECASE)
 

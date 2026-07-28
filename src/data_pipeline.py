@@ -82,9 +82,11 @@ def load_gold_holdout(path=None, require=True):
     # The LLM judgement is the ground truth here.
     df[cfg.TARGET_COLUMN] = df["llm_is_hazard"].astype(int)
 
-    base_rate = df[cfg.TARGET_COLUMN].mean()
-    print(f"Gold holdout: {len(df)} rows | hazard base rate {base_rate:.1%} "
-          f"(the 50/50 in-sample gold set cannot measure this)")
+    # Not the population base rate: the pool was keyword-screened before labelling, so
+    # this is the rate *inside the funnel*. The raw Yelp rate is plausibly 2-5%.
+    funnel_rate = df[cfg.TARGET_COLUMN].mean()
+    print(f"Gold holdout: {len(df)} rows | hazard rate within the keyword-screened "
+          f"funnel {funnel_rate:.1%} (the 50/50 in-sample gold set cannot measure this)")
     return df
 
 

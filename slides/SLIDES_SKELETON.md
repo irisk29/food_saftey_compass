@@ -43,8 +43,8 @@ Every number on a slide must trace to a file in `results/` or `labeling/` — th
 
 ## Slide 6 — Act II: our validation set was contaminated too
 - First gold set was sampled from the training pool → **1,334 / 1,500 rows (89%) sat in the train split** — evaluating on it = measuring memorization
-- Fix: built a candidate pool straight from raw Yelp, identical normalization, **verified 0/744 text overlap** with all training data (check runs in `verify_setup.py` preflight)
-- Fresh LLM-labeled holdout: **744 rows, 342 hazards (46%)** — *within the keyword-screened funnel* (say this caveat out loud before someone asks; population rate ~2–5%)
+- Fix: built a candidate pool straight from raw Yelp, identical normalization, **verified 0/772 text overlap** with all training data (check runs in `verify_setup.py` preflight)
+- Fresh LLM-labeled holdout: **772 rows, 355 hazards (46.0%)** — *within the keyword-screened funnel* (say this caveat out loud before someone asks; population rate ~2–5%)
 - Evidence: `labeling/gold_dataset_holdout.csv`, `labeling/build_holdout_pool.py`
 
 ## Slide 7 — Technique 1: fine-tuned DeBERTa-v3 with cost-sensitive loss
@@ -57,11 +57,11 @@ Every number on a slide must trace to a file in `results/` or `labeling/` — th
 - Evidence: `src/losses.py`, `src/sota_model.py`, `tests/test_losses.py`
 
 ## Slide 8 — Act III: the metric that selects a broken model
-- At w=50 with **recall** as the selection metric, training collapses to "everything is a hazard" — 100% recall, 37.5% precision — and recall-selection *prefers* it
-- Fix: checkpoint by **F2**, hyperparameter search by **PR-AUC**, log flag-rate as a collapse alarm
+- ⚠️ **Do NOT claim the w=50 collapse as a measurement.** It was an un-persisted historical observation, and the 8-cell grid has since **refuted it**: nothing collapses at w=50 in either formulation (`collapsed=False` in all 8 rows; `pos_weight@50` flag rate 0.197, recall 0.921, precision 0.936). The old "100% recall / 37.5% precision" figures have no artifact behind them — delete them.
+- The argument that survives, and it is sound on its own: **bare recall is maximised by a constant all-positive answer**, so it cannot be a selection metric — *a priori*, no experiment needed
+- Fix: checkpoint by **F2**, hyperparameter search by **PR-AUC**, log flag-rate as a collapse alarm — and `tests/test_losses.py` has a regression guard asserting an all-positive model is caught by F2/PR-AUC/flag-rate
 - One-liner: *"any metric you can maximize with a constant answer is not a safety metric"*
-- Evidence: `config/settings.py` (CHECKPOINT_METRIC/HPO_METRIC), grid-search notes, regression test
-- 🔶 PENDING (nice-to-have): loss-variant × weight grid table from `grid_search_analysis.py` overnight run
+- Evidence: `config/settings.py` (CHECKPOINT_METRIC/HPO_METRIC), `tests/test_losses.py`, `results/grid_search_loss_variants.csv`
 
 ## Slide 9 — 🔶 PENDING `analysis.py` — Results: same models, two ground truths
 - THE payoff slide. Table: Baseline (TF-IDF+XGB, class-balanced) vs DeBERTa × {heuristic test labels, gold holdout} — PR-AUC leads, then F2 / precision / recall @ deployed threshold
@@ -78,8 +78,9 @@ Every number on a slide must trace to a file in `results/` or `labeling/` — th
 - Evidence: `src/topic_model.py`, `results/topic_model_*.csv` (regenerate before quoting coherence)
 
 ## Slide 11 — What topic modeling can and cannot find
-- ✅ Both models isolate a crisp allergen/celiac topic — "gluten, celiac, cross contamination, gf" — **lift 5.28** (NMF) / 4.18 (LDA) for allergic-reaction reviews
-- ❌ Neither subdivides the dominant food-poisoning mass (69% of validated docs); overall purity 0.716 vs 0.690 majority baseline
+- ✅ **Lead with NMF** (deterministic `nndsvda` init, reproduces exactly). NMF K=6 isolates a crisp allergen/celiac topic — "gluten, celiac, cross contamination, gf" — **lift 5.28**, and **per-topic NPMI +0.43**, by far the most coherent topic found
+- ⚠️ LDA is **environment-sensitive** (different fits across machines at the same seed) — quote LDA only from the committed artifact (K=4, lift 2.52), never the old 4.18, and say the reproducibility caveat out loud
+- ❌ Neither subdivides the dominant food-poisoning mass (69% of validated docs); overall purity **0.697** (NMF K=6) vs 0.690 majority baseline — the old 0.716 has no surviving artifact
 - The honest finding: *topic models find the **lexically distinct** rare hazard and fail on the **lexically diffuse** common one* — that's a property of the technique, not a tuning failure
 - Evidence: `results/topic_model_type_lift.csv`, `topic_model_crosstabs.txt`
 
@@ -98,16 +99,21 @@ Every number on a slide must trace to a file in `results/` or `labeling/` — th
 ---
 
 ## Q&A back-pocket (not presented — rehearse answers)
-1. "Is your asymmetric loss just class weighting?" → the `pos_weight` variant is, and we say so; `focal`/`fn_gated` are error-dependent (show the fn_gated gate), and the grid compares all three.
+1. "Is your asymmetric loss just class weighting?" → the `pos_weight` variant is, exactly, and we say so; `focal_asymmetric` is error-dependent. The grid compares those two across 4 weights (8 cells). **`fn_gated` is implemented and unit-tested but was never run** — say that, don't imply it was.
 2. "46% hazard rate — really?" → funnel rate, 100% of holdout passes the keyword screen; strong-tier 71.5% vs weak-tier 21.4%; population ~2–5%.
-3. "Why w=50 when your cost ratio implies 100:1?" → historical; the grid sweeps w; reconcile explicitly.
-4. "Test set used for selection?" → yes for heuristic-split numbers (footnoted); the gold holdout never touched selection.
-5. "Only 744 holdout rows?" → recall CI ±3–4 pts at n_pos=342; adequate, and labeling is resumable.
+3. "Why w=50 when your cost ratio implies 100:1?" → the weight was fixed before the grid ran. The grid then ranked two configs ahead of it on gold, by 0.011 and 0.019 PR-AUC — both smaller than our measured run-to-run discrepancy (up to 0.054), so we report the grid rather than retrofit the deployment to it.
+4. "Test set used for selection?" → no. Checkpoint selection ran on the **validation** split, so the heuristic test-split numbers are out-of-selection; the gold holdout never touched selection at all.
+5. "Only 772 holdout rows?" → recall CI ±3–4 pts at n_pos=355; adequate, and labeling is resumable.
 6. "Why no word/doc embeddings?" → chose topic modeling as technique #2 because it answers research question 2 (hazard-type discovery); embeddings answer neither question better than DeBERTa already does.
+7. **"How stable are these numbers?"** → all runs use the HF default seed 42; re-training four configs under identical settings moved gold PR-AUC by 0.00005–0.054, so we treat gold gaps below ~0.05 as unresolved and report the weight-response *shape*, not a ranking. The deployed config was trained 3× across 2 code paths: 0.7961 / 0.8021 / 0.8045.
+8. **"Why do your PR-AUC and cost columns disagree?"** → cost and F2 are computed at a fixed th=0.20 while PR-AUC is threshold-free, so a model that simply flags more (`focal@5` flags 75% of the holdout) looks cheap under a 100:1 ratio. We select on PR-AUC and would re-tune the threshold per model.
+9. **"Your flag rate on gold is 66–75% but the base rate is 46% — isn't the model over-flagging?"** → yes, and knowably: the 0.20 threshold was tuned against the heuristic label and does not transfer to the gold distribution. Same models flag 19–21% on validation. One more instance of the central thesis.
 
 ## Build checklist
-- [ ] Run `analysis.py` → fills Slides 9, 12 (+ final numbers on 13)  ← **blocker, do first**
-- [ ] NPMI fix + topic rerun → refresh coherence numbers on Slide 10
-- [ ] Optional overnight loss grid → upgrade Slide 8
-- [ ] Figures to export: confusion 2×2 (S4), FP-bucket bar chart (S5), contamination diagram (S6), dual-ground-truth table (S9), lift table heat-strip (S11)
+- [x] Run `analysis.py` → fills Slides 9, 12 (+ final numbers on 13)
+- [x] NPMI fix + topic rerun → refresh coherence numbers on Slide 10
+- [x] Full 8-cell loss grid, all gold-scored → rebuild Slide 8 and add the two new slides it earned
+- [ ] **NEW Slide — saturation:** validation spread 0.0030 across 8 configs vs gold spread 0.0992 (**33×**), and **Spearman ρ = −0.24** between the two ground truths. Line: *"we built an evaluation set because we could not tell our own models apart without one."*
+- [ ] **NEW Slide — what the loss actually does:** gold PR-AUC vs w for both variants. `pos_weight` declines monotonically (0.8096 → 0.7956 → 0.7905 → 0.7219, range 0.088); `focal_asymmetric` is non-monotone in a band half as wide (range 0.043). Claim: **robustness to a hyperparameter, not peak performance.** Include the noise-floor caveat on the same slide.
+- [ ] Figures to export: confusion 2×2 (S4), FP-bucket bar chart (S5), contamination diagram (S6), dual-ground-truth table (S9), lift table heat-strip (S11), weight-response curve (new)
 - [ ] Rehearse to 14 min; Slides 4–6 are the differentiator — do not rush them

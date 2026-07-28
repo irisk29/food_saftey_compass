@@ -8,22 +8,22 @@ Failure modes are assigned by the rule set in `analysis/error_analysis.py`. Each
 
 | Failure mode | Count | Share | Mean words |
 |---|---:|---:|---:|
-| `illness_mentioned_not_caused_here` | 96 | 48% | 179 |
+| `illness_mentioned_not_caused_here` | 92 | 46% | 181 |
 | `unexplained_fp` | 43 | 21% | 160 |
-| `negated_hazard` | 25 | 12% | 154 |
+| `negated_hazard` | 30 | 15% | 152 |
 | `neutral_allergen_mention` | 23 | 11% | 231 |
 | `secondhand_or_hearsay` | 5 | 2% | 230 |
-| `hypothetical_or_speculative` | 4 | 2% | 92 |
+| `hypothetical_or_speculative` | 3 | 2% | 87 |
 | `unpleasant_not_unsafe` | 3 | 2% | 362 |
 | `generic_complaint_no_hazard` | 2 | 1% | 242 |
 
-### `illness_mentioned_not_caused_here` — 96 cases
+### `illness_mentioned_not_caused_here` — 92 cases
 
 Illness vocabulary with no causal link to this meal — 'picking up food for a sick friend', 'I was sick that week so I craved soup'. The keyword rule cannot represent causation at all, only co-occurrence, so every one of these is guaranteed to be mislabelled. A contextual model should beat the label here, which means these cases are where the model looks *wrong* while actually being right.
 
-- I usually try and go organic whenever I can and this place isn't so bad. Wish they had more room and places to sit because sometimes it can get busy. Coffee wasn't so bad and food was decent. This is really the only place I haven't gotten sick from on the island since my husband …
 - You sick sick sad little man who ran from us because you didn't know what a gramcracker is I dislike you you are almosty single handedly worse then carpinteria campground and my experience with rubbing alcohol. You have ruined the store with a giant selection of mayonnaise for me…
-- Yikes! We stopped in for the lunch buffet because we were at the doing laundry next door and we were hungry. The restaurant was so dirty! The lettuce at salad bar looked old and brown, so I chose the spinach. But then I did not even want to get a fork for my salad because the ute…
+- Drove all the way across town to get a breakfast burrito for a sick friend, I called ahead to make sure you served breakfast until noon. I arrived at 11:56 and was told you stopped serving breakfast at noon. I stated that it wasn't noon yet. My phone, the clock on my car and the …
+- I would've gave them 1 star if it wasn't required..... Nasty Rewarmed Gritz, Dirty waffle makers...... I'm sick Of'em...... this eatery hasn't been up to par since the first day they opened the doors…
 
 ### `unexplained_fp` — 43 cases
 
@@ -33,13 +33,13 @@ No rule matched — requires manual review.
 - Family reunion was held on May 31st thru June 4th 2018 at Shephard's. Gulf front room with a great view and that's about all I could honestly say. There is really not enough light in the room especially for women when wanting to get dressed and apply makeup. There isn't a mirror …
 - So I REALLY like this place, they have great coffee, soy and almond milk, and good food. (I have an allergy that prevents me from eating most of their food - but what I have eaten is great and everyone knows loves it), BUT it is a coffee shop and they take WAY too long to make a …
 
-### `negated_hazard` — 25 cases
+### `negated_hazard` — 30 cases
 
 A hazard term inside a negation scope ('never got sick here'). Bag-of-words baselines cannot represent negation at all; a transformer can in principle, so residual errors here indicate the fine-tune did not have enough negated examples to learn it.
 
+- I usually try and go organic whenever I can and this place isn't so bad. Wish they had more room and places to sit because sometimes it can get busy. Coffee wasn't so bad and food was decent. This is really the only place I haven't gotten sick from on the island since my husband …
 - Ordered food - the soup dumplings. 4 of them were fine (they tasted OK), but the other 4 were absolutely raw (took 1 bite, threw the rest away)....I hope I do not get sick from the dumplings. The other things were fine...but the raw dumplings were unacceptable.…
 - This place was built onto the side the hotel I was staying in, so after driving all day I decided to have dinner with four other members of my party at Syberg's. Obviously the location was convenient. The ambiance is identical to just about any other sports bar and grill you've e…
-- I haven't been here in years, and a couple of weeks ago I decided to give it another try, since I had once praised it so highly. The salad was iceberg and nothing else. That creamy ginger dressing I once loved? Too heavy and too mayo like. The sushi was fine. It was edible and I …
 
 ### `neutral_allergen_mention` — 23 cases
 
@@ -57,7 +57,7 @@ Hazard attributed to someone else or to other reviews. Needs source attribution,
 - This place is pretty good but... if you like onions on your pizza be ready for a rude surprise- this place refuses to use onions (apparently someone there is allergic to onions... weird choice in work if that's your allergy). If you absolutely hate/ allergic to onions, this place…
 - I just recently ate at Chili's at about 8:00 PM on 10/29/2017. I was greeted by a waitress who insisted on using terms of endearment towards me while calling my male companion "sir". I ordered the white spinach queso dip and we each ordered beers. The dip was amazing. The waitres…
 
-### `hypothetical_or_speculative` — 4 cases
+### `hypothetical_or_speculative` — 3 cases
 
 Hazard raised as a possibility, not an event ('I'm surprised I didn't get sick'). Requires modality/irrealis detection, which neither model is trained for.
 

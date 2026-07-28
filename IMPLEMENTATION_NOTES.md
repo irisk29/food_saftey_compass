@@ -27,10 +27,11 @@ New in `src/data_pipeline.py`:
 - `heuristic_vs_llm_agreement()` — label-quality metrics, valid on the full in-sample set
   because it compares two labels and never consults a model.
 
-**A first result this already unlocks:** the fresh set has a **42.3% hazard base rate**
-(measured on the first 182 labelled rows). The 50/50-by-construction in-sample set could
-not measure this at all. Caveat for the write-up: this is the base rate *among
-keyword-flagged candidates*, not among all Yelp reviews, since the pool is pre-filtered.
+**A first result this already unlocks:** the fresh set has a **46.0% hazard rate within the
+keyword-screened funnel** (355 of 772 rows, final labelled set — an early partial read on the
+first 182 rows gave 42.3%). The 50/50-by-construction in-sample set could not measure this at
+all. Caveat for the write-up: this is the rate *among keyword-flagged candidates*, not among all
+Yelp reviews (plausibly 2–5%), since the pool is pre-filtered.
 
 `src/features.py` is new and exists for this: the enrichment features were defined only
 inside the postprocessing notebook, so fresh data could not be scored by the baseline.
@@ -140,15 +141,19 @@ LLM `hazard_type`. Fitting on the larger set is legitimate because fitting never
   NMF at K∈{2,3,4} is degenerate (one topic holds 84–95% of docs). The code excludes
   degenerate fits and reports coherence-selected and validation-selected K separately.
 - Selected **LDA K=4**, **NMF K=6**.
-- Recovery of known types is **weak and honestly reported**: purity 0.716 against a
-  **0.690 majority-class baseline**, NMI 0.10–0.12 against a shuffle null of 0.006–0.014.
-  Both baselines are computed and printed so the numbers cannot be over-read.
-- **The lift analysis is the actual finding.** Both models isolate a clean allergen topic:
+- Recovery of known types is **weak and honestly reported**: purity **0.697** (NMF K=6) against
+  a **0.690 majority-class baseline** — i.e. essentially the baseline — with NMI 0.09–0.12
+  against a shuffle null of 0.006–0.014. Both baselines are computed and printed so the numbers
+  cannot be over-read. *(The earlier 0.716 came from a run whose artifacts no longer exist; it is
+  void — quote 0.697 from the committed sweep.)*
+- **The lift analysis is the actual finding.** Both models isolate a clean allergen topic —
+  **lead with NMF**, which reproduces exactly (deterministic `nndsvda` init); the LDA row is
+  environment-sensitive and must be quoted only from the committed artifact:
 
   | model | topic | top words | best-lift type | lift |
   |---|---|---|---|---|
-  | NMF K=6 | 1 | gluten, gluten free, celiac, contamination, cross contamination, gf | `allergic_reaction` | **5.28** |
-  | LDA K=4 | 0 | free, gluten, asked, allergy, gluten free, allergic | `allergic_reaction` | **4.18** |
+  | NMF K=6 | 1 | gluten, gluten free, celiac, contamination, cross contamination, gf | `allergic_reaction` | **5.28** (per-topic NPMI **+0.43**) |
+  | LDA K=4 | 0 | free, gluten, asked, allergy, gluten free, allergic | `allergic_reaction` | **2.52** *(committed value; a second environment gave 4.18 — do not quote it)* |
 
   What neither can do is subdivide the dominant `food_poisoning` mass (69% of validated docs).
 
@@ -208,6 +213,11 @@ back to the previous hardcoded values otherwise.
 
 **Smoke-tested end to end** with a tiny transformer on a 400-row subsample: training,
 custom loss, metrics, checkpoint selection, both evaluations, error analysis and all
-plots run clean. In that run the baseline scored PR-AUC **0.986 against the heuristic
-label but 0.717 against the gold label** — a −0.27 collapse. Indicative only at that
-sample size, but it is exactly the quantity the redesign was built to expose.
+plots run clean. In that run the baseline scored PR-AUC 0.986 against the heuristic label but
+0.717 against the gold label — a −0.27 collapse.
+
+⚠️ **Those are smoke-test figures — do not quote them.** The full run has since completed and
+the real numbers are in `results/performance_gold_llm_label_fresh_holdout.csv`: the baseline
+scores PR-AUC **0.979 vs the heuristic label and 0.728 vs gold (−0.251)**, DeBERTa **0.987 vs
+0.804 (−0.183)**. The smoke test predicted the shape correctly, which is worth one sentence —
+but the reported quantity is the committed one.

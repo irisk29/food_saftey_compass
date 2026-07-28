@@ -28,7 +28,7 @@ This must be reconciled before submission, in one of two directions: either the 
 | `AttenuatedAsymmetricBCEWithLogitsLoss`, ω dialed 50→**5.0**, **linear epoch annealing** ω: 1→max | `src/losses.py` has `pos_weight`, `focal_asymmetric`, `fn_gated`. **No attenuation/annealing class exists in any committed file.** |
 | Final results: **PR-AUC 0.9279, Recall 90.59%, Precision 72.64%** (Figure 3) | `results/` contains **zero model-performance artifacts**. No run under the fixed configuration has ever completed. These numbers are unreproducible from the repo. |
 | Baseline collapse to **74.10% recall / 22 missed** on gold (Figure 1) | No artifact backs this; plausibly from an uncommitted earlier run. |
-| SOTA collapse to 37.4% precision at 100% recall (Figure 2) | The *phenomenon* is confirmed (grid-search notes observed the w=50 collapse) — but no persisted figure/CSV exists. |
+| SOTA collapse to 37.4% precision at 100% recall (Figure 2) | **Refuted as of 2026-07-28.** No persisted figure/CSV ever backed this, and the completed 8-cell grid now contradicts it: `collapsed=False` in all 8 rows, and `pos_weight@50` — the exact configuration alleged to collapse — sits at flag rate 0.197 / recall 0.921 / precision 0.936 (`results/grid_search_loss_variants.csv`). The w=50 collapse must not be quoted anywhere. The reason bare recall was abandoned remains sound a priori and needs no experiment. |
 | Figures 1–3 | No figure files in the repo. |
 
 **Decision needed now:** if these runs happened, commit the code, data, and figures that produced them (and reconcile the 1,132-row dataset with the two gold sets the repo documents). If they cannot be recovered, the Results/Phase III/Phase IV sections must be rewritten around the output of `analysis.py` — which is V3's #1 blocker anyway. Do not submit a report whose headline numbers the repo cannot generate.
@@ -71,7 +71,7 @@ The table (Baseline 100%/100%; DeBERTa 97.7%/88.3% at th=0.50, etc.) is measured
 2. **Restructure the middle of the document around the true four-phase arc** (the docx's phase structure is right; its contents need swapping):
    - Phase I: heuristic label + baseline (keep as-is).
    - Phase II: leakage discovery — keep, and add the *feature exclusion* fix and the LLM audit numbers (85.8% / 27% over-flagging / taxonomy).
-   - Phase III: the validation set was itself contaminated (89% in train) → holdout construction, zero-overlap verification, 744 rows, funnel caveat.
+   - Phase III: the validation set was itself contaminated (89% in train) → holdout construction, zero-overlap verification, 772 rows, funnel caveat.
    - Phase IV: selection-metric failure (recall → all-positive collapse at ω=50) → F2/PR-AUC selection + error-dependent loss variants → final numbers from `analysis.py`.
 3. **Add a Topic Modeling chapter** (LDA/NMF, K sweep, corrected NPMI after the V3 §2.1 bug fix, lift table, the honest negative result).
 4. **Replace the performance matrix** with the new dual-ground-truth table; keep the old 100% row only as the leakage exhibit.
