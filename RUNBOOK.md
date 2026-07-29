@@ -217,6 +217,70 @@ on this list that fixes an actual incorrectness rather than adding a caveat.
 
 ---
 
+## Step 5b — ✅ DONE: document embeddings, the third course technique (2026-07-29, CPU-only)
+
+Closes the largest remaining gap against the brief: the report claimed two of the five course
+techniques and the embedding family had been explicitly declined. `src/embedding_model.py` adds
+it, and the run needs **no GPU** — the whole thing is ~6 minutes on the Windows/CPU box.
+
+```bash
+pip install -r requirements.txt          # adds gensim>=4.4, sentence-transformers>=2.7
+python -m src.embedding_model --seeds 42 43 44
+python tests/test_embedding_model.py     # 21 tests
+```
+
+If the HuggingFace hub is unreachable, drop the pretrained variant — everything else still runs:
+
+```bash
+python -m src.embedding_model --variants tfidf_lr tfidf_lsa doc2vec_dbow
+```
+
+**It is additive by construction.** It writes only `results/*embedding*` files, reads the
+committed `performance_*.csv` rather than recomputing the baseline or DeBERTa, and touches no
+existing module. `analysis.py`, the loss grid and the topic model were **not** re-run.
+
+Four text-only representations, one identical class-balanced `LogisticRegression`, both ground
+truths, same `score_variant` and same cost model as everything else:
+
+| Representation (gold holdout) | PR-AUC | 95% CI | heuristic→gold delta |
+|---|---:|---:|---:|
+| DeBERTa-v3 (committed) | **0.804** | — | −0.183 |
+| LSA 300d + LogReg | 0.757 | 0.724–0.793 | −0.169 |
+| XGBoost baseline (committed) | 0.728 | — | −0.251 |
+| TF-IDF + LogReg (text-only control) | 0.711 | 0.667–0.754 | −0.213 |
+| MiniLM-L6-v2 frozen 384d + LogReg | 0.709 | 0.666–0.750 | −0.148 |
+| Doc2Vec PV-DBOW 300d + LogReg | 0.683 | 0.639–0.732 | −0.098 |
+
+**Three things to carry into the deck:**
+
+1. **The result is a negative one, and it is better than a win would have been.** No frozen
+   embedding is distinguishable from TF-IDF on gold, and all four lose to DeBERTa. A frozen
+   transformer encoder scores **0.709** — level with plain TF-IDF at 0.711 — while the
+   fine-tuned one scores **0.804**. So **dense distributed representation is not where the
+   transformer's advantage comes from.** ⚠️ Do not upgrade that to "the advantage is
+   fine-tuning": MiniLM-L6-v2 is also 8× smaller than DeBERTa-v3-base (6 layers / 22M vs
+   12 / 184M) and pretrained on a sentence-similarity objective, so freezing, capacity and
+   pretraining objective are confounded. The negative claim is clean; the causal one is not.
+2. **The delta column is the money column.** It orders the six models almost perfectly by how
+   little each can memorise the keyword rule. Best single sentence available: TF-IDF and frozen
+   MiniLM reach the same gold PR-AUC (0.711 vs 0.709, well inside one CI) from heuristic scores
+   0.066 apart — the heuristic label pays TF-IDF for skill worth nothing out of sample. Do note
+   the delta is *partly* mechanical (a lower heuristic score has less room to fall), which is
+   why the equal-gold/unequal-heuristic pair is the version to quote: it has no such artifact.
+3. **Every model inherits the label's blind spots, and DeBERTa inherits them least.** Share of
+   gold false positives sitting in the labelling rule's own top two failure modes: DeBERTa
+   **64.5%** (the same figure CLAUDE.md rounds to 65%), TF-IDF 69.1%, MiniLM 71.8%, LSA 75.9%,
+   Doc2Vec 76.5%
+   (`results/embedding_vs_deberta_fp_modes.csv`). This upgrades the existing "the model inherits
+   its teacher's blind spots" slide from an observation about one model to a **dose-response
+   across five**.
+
+⚠️ **Do not quote MiniLM's risk cost as a win.** It is the lowest in the project ($175,400 vs
+DeBERTa's $204,850) because it flags 81.7% of the holdout — the identical over-flagging pathology
+the loss grid already found in `focal_asymmetric@5`. Select on PR-AUC.
+
+---
+
 ## Step 6 — Optuna sweep (optional; only if Steps 1–5 are done)
 
 `python main.py` runs 3 trials at 4 epochs — **8–12 hours**. It buys you honest

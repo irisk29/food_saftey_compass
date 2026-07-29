@@ -1,0 +1,264 @@
+Using device: cpu
+==========================================================================
+  DOCUMENT-EMBEDDING CLASSIFIERS — course technique #3
+  variants: tfidf_lr, tfidf_lsa, doc2vec_dbow, minilm   primary seed: 42
+==========================================================================
+Resolved absolute path: E:\textminning\food_saftey_compass\postprocessing\enriched_allergy_hazard_dataset.csv
+Data split successfully. Train Size: 4800 | Val Size: 1200 | Test Size: 1500
+Gold holdout: 772 rows | hazard rate within the keyword-screened funnel 46.0% (the 50/50 in-sample gold set cannot measure this)
+
+--- Holdout integrity (mirrors verify_setup.py section 4) ---
+  [!]    leakage check: 1 of 1500 test-split rows appear in the fitted corpus  (pre-existing duplicate text in the source CSV; identical for the baseline and DeBERTa)
+    leakage check: 0 of 1200 validation rows appear in the fitted corpus
+    leakage check: 0 of 772 gold-holdout rows appear in the fitted corpus
+
+--- tfidf_lr: fitting representation on 4800 train reviews ---
+    TF-IDF, 2500 features (sparse)
+    train matrix (4800, 2500)
+
+--- tfidf_lsa: fitting representation on 4800 train reviews ---
+    LSA 300d over 2500 TF-IDF features, explained variance 0.471
+    train matrix (4800, 300)
+
+--- doc2vec_dbow: fitting representation on 4800 train reviews ---
+    PV-DBOW 300d, 40 epochs, vocab 9146, 4800 trained doc vectors, seed 42
+    train matrix (4800, 300)
+
+--- minilm: fitting representation on 4800 train reviews ---
+    sentence-transformers/all-MiniLM-L6-v2 frozen, 384d, max_seq_length=256, device=cpu
+    train matrix (4800, 384)
+
+--- Variant diagnostics (validation split; selection-free, C is NOT tuned on it) ---
+     variant                             display  dimensions                                             head  seed  val_pr_auc  val_f2_at_0.20  val_flag_rate
+    tfidf_lr TF-IDF + LogReg (text-only control)        2500 LogisticRegression(C=1.0, class_weight=balanced)    42    0.931788        0.864000       0.241667
+   tfidf_lsa                   LSA 300d + LogReg         300 LogisticRegression(C=1.0, class_weight=balanced)    42    0.936140        0.869057       0.269167
+doc2vec_dbow       Doc2Vec PV-DBOW 300d + LogReg         300 LogisticRegression(C=1.0, class_weight=balanced)    42    0.847873        0.797915       0.239167
+      minilm   MiniLM-L6-v2 frozen 384d + LogReg         384 LogisticRegression(C=1.0, class_weight=balanced)    42    0.879638        0.799707       0.335833
+  -> E:\textminning\food_saftey_compass\results\embedding_variant_diagnostics.csv
+
+==========================================================================
+  EMBEDDING EVALUATION: Heuristic label (test split)
+  1500 reviews | hazard rate 20.0%
+==========================================================================
+                                               PR-AUC Recall (Safety Coverage) Precision (Alert Validity) F2 (recall-weighted)      F1 Flag Rate  False Negatives (Missed)  False Positives (Alarms) Total Risk Cost
+TF-IDF + LogReg (text-only control) (th=0.50)  0.9238                    86.7%                      84.1%               0.8615  0.8539     20.6%                      40.0                      49.0        $202,450
+TF-IDF + LogReg (text-only control) (th=0.20)  0.9238                    91.3%                      75.5%               0.8765  0.8265     24.2%                      26.0                      89.0        $134,450
+LSA 300d + LogReg (th=0.50)                    0.9262                    87.7%                      79.0%               0.8578  0.8310     22.2%                      37.0                      70.0        $188,500
+LSA 300d + LogReg (th=0.20)                    0.9262                    92.7%                      66.2%               0.8580  0.7722     28.0%                      22.0                     142.0        $117,100
+Doc2Vec PV-DBOW 300d + LogReg (th=0.50)        0.7806                    65.3%                      77.8%               0.6749  0.7101     16.8%                     104.0                      56.0        $522,800
+Doc2Vec PV-DBOW 300d + LogReg (th=0.20)        0.7806                    74.3%                      69.5%               0.7331  0.7182     21.4%                      77.0                      98.0        $389,900
+MiniLM-L6-v2 frozen 384d + LogReg (th=0.50)    0.8577                    83.0%                      66.2%               0.7900  0.7367     25.1%                      51.0                     127.0        $261,350
+MiniLM-L6-v2 frozen 384d + LogReg (th=0.20)    0.8577                    91.3%                      54.5%               0.8045  0.6824     33.5%                      26.0                     229.0        $141,450
+
+  -> E:\textminning\food_saftey_compass\results\performance_embedding_heuristic_label_test_split.csv
+  Cost-minimising threshold (tfidf_lr) on this set: 0.01 (deployed: 0.20)
+  Cost-minimising threshold (tfidf_lsa) on this set: 0.01 (deployed: 0.20)
+  Cost-minimising threshold (doc2vec_dbow) on this set: 0.01 (deployed: 0.20)
+  Cost-minimising threshold (minilm) on this set: 0.01 (deployed: 0.20)
+
+==========================================================================
+  EMBEDDING EVALUATION: Gold LLM label (fresh holdout)
+  772 reviews | hazard rate 46.0%
+==========================================================================
+                                               PR-AUC Recall (Safety Coverage) Precision (Alert Validity) F2 (recall-weighted)      F1 Flag Rate  False Negatives (Missed)  False Positives (Alarms) Total Risk Cost
+TF-IDF + LogReg (text-only control) (th=0.50)  0.7112                    74.1%                      65.8%               0.7225  0.6967     51.8%                      92.0                     137.0        $466,850
+TF-IDF + LogReg (text-only control) (th=0.20)  0.7112                    80.8%                      63.9%               0.7678  0.7139     58.2%                      68.0                     162.0        $348,100
+LSA 300d + LogReg (th=0.50)                    0.7574                    74.1%                      56.9%               0.6987  0.6438     59.8%                      92.0                     199.0        $469,950
+LSA 300d + LogReg (th=0.20)                    0.7574                    83.7%                      53.2%               0.7508  0.6506     72.3%                      58.0                     261.0        $303,050
+Doc2Vec PV-DBOW 300d + LogReg (th=0.50)        0.6831                    59.4%                      64.5%               0.6039  0.6188     42.4%                     144.0                     116.0        $725,800
+Doc2Vec PV-DBOW 300d + LogReg (th=0.20)        0.6831                    69.3%                      59.7%               0.6714  0.6415     53.4%                     109.0                     166.0        $553,300
+MiniLM-L6-v2 frozen 384d + LogReg (th=0.50)    0.7092                    87.9%                      54.5%               0.7831  0.6731     74.1%                      43.0                     260.0        $228,000
+MiniLM-L6-v2 frozen 384d + LogReg (th=0.20)    0.7092                    91.0%                      51.2%               0.7874  0.6552     81.7%                      32.0                     308.0        $175,400
+
+  -> E:\textminning\food_saftey_compass\results\performance_embedding_gold_llm_label_fresh_holdout.csv
+
+[embedding_tfidf_lr_gold_llm_label_fresh_holdout] 162 false positives, 68 false negatives
+error_type                      primary_mode  count  mean_words  mean_prob  share_of_error_type
+        FN                    unexplained_fn     43  160.279070   0.056765                0.632
+        FN        unsafe_handling_no_illness     10  212.600000   0.043084                0.147
+        FN             buried_in_long_review      6  221.500000   0.028169                0.088
+        FN                  negation_misread      4  130.500000   0.027288                0.059
+        FN       positive_review_with_hazard      3  135.000000   0.005719                0.044
+        FN          contamination_no_illness      1  172.000000   0.001694                0.015
+        FN             too_short_weak_signal      1   25.000000   0.010006                0.015
+        FP          neutral_allergen_mention     73  175.753425   0.775444                0.451
+        FP illness_mentioned_not_caused_here     39  184.538462   0.819664                0.241
+        FP                    unexplained_fp     21  251.714286   0.839278                0.130
+        FP       generic_complaint_no_hazard     12  167.916667   0.820220                0.074
+        FP                    negated_hazard     12  207.250000   0.928278                0.074
+        FP             secondhand_or_hearsay      2  308.000000   0.992346                0.012
+        FP                hyperbole_or_slang      1  181.000000   0.968481                0.006
+        FP    strong_negative_sentiment_only      1   60.000000   0.999981                0.006
+        FP             unpleasant_not_unsafe      1  233.000000   0.996877                0.006
+
+[embedding_tfidf_lsa_gold_llm_label_fresh_holdout] 261 false positives, 58 false negatives
+error_type                      primary_mode  count  mean_words  mean_prob  share_of_error_type
+        FN                    unexplained_fn     36  129.055556   0.048510                0.621
+        FN        unsafe_handling_no_illness      7  170.857143   0.037677                0.121
+        FN       positive_review_with_hazard      5  184.000000   0.015747                0.086
+        FN                  negation_misread      4  189.250000   0.070795                0.069
+        FN             buried_in_long_review      3  182.000000   0.006154                0.052
+        FN          contamination_no_illness      1  172.000000   0.183367                0.017
+        FN          mild_understated_wording      1  459.000000   0.077493                0.017
+        FN             too_short_weak_signal      1   25.000000   0.000506                0.017
+        FP          neutral_allergen_mention    162  168.944444   0.770952                0.621
+        FP illness_mentioned_not_caused_here     36  207.138889   0.640466                0.138
+        FP                    unexplained_fp     29  264.655172   0.695772                0.111
+        FP                    negated_hazard     13  225.538462   0.794484                0.050
+        FP       generic_complaint_no_hazard     11  184.454545   0.646941                0.042
+        FP             secondhand_or_hearsay      6  277.666667   0.889597                0.023
+        FP                hyperbole_or_slang      2  297.000000   0.328064                0.008
+        FP    strong_negative_sentiment_only      1   60.000000   0.819895                0.004
+        FP             unpleasant_not_unsafe      1  233.000000   0.981125                0.004
+
+[embedding_doc2vec_dbow_gold_llm_label_fresh_holdout] 166 false positives, 109 false negatives
+error_type                      primary_mode  count  mean_words  mean_prob  share_of_error_type
+        FN                    unexplained_fn     60  191.966667   0.043505                0.550
+        FN             buried_in_long_review     17  265.764706   0.026738                0.156
+        FN        unsafe_handling_no_illness     12  229.750000   0.049912                0.110
+        FN       positive_review_with_hazard     11  165.454545   0.066311                0.101
+        FN                  negation_misread      6  362.666667   0.016944                0.055
+        FN          contamination_no_illness      2  166.000000   0.096382                0.018
+        FN          mild_understated_wording      1  459.000000   0.000002                0.009
+        FP          neutral_allergen_mention     95  136.505263   0.675221                0.572
+        FP illness_mentioned_not_caused_here     32  136.437500   0.726546                0.193
+        FP                    unexplained_fp     18  186.944444   0.627213                0.108
+        FP       generic_complaint_no_hazard     11   97.727273   0.680054                0.066
+        FP                    negated_hazard      7  143.428571   0.689751                0.042
+        FP             secondhand_or_hearsay      2  264.000000   0.706721                0.012
+        FP    strong_negative_sentiment_only      1   60.000000   0.957837                0.006
+
+[embedding_minilm_gold_llm_label_fresh_holdout] 308 false positives, 32 false negatives
+error_type                      primary_mode  count  mean_words  mean_prob  share_of_error_type
+        FN                    unexplained_fn     17  111.352941   0.070842                0.531
+        FN       positive_review_with_hazard      5  136.000000   0.077445                0.156
+        FN                  negation_misread      4  350.000000   0.069723                0.125
+        FN             buried_in_long_review      3  352.000000   0.057060                0.094
+        FN        unsafe_handling_no_illness      2  215.500000   0.078683                0.062
+        FN             too_short_weak_signal      1   25.000000   0.012843                0.031
+        FP          neutral_allergen_mention    162  180.092593   0.776158                0.526
+        FP illness_mentioned_not_caused_here     59  171.661017   0.900511                0.192
+        FP                    unexplained_fp     42  218.761905   0.795084                0.136
+        FP       generic_complaint_no_hazard     20  139.300000   0.886942                0.065
+        FP                    negated_hazard     15  202.466667   0.884232                0.049
+        FP             secondhand_or_hearsay      5  246.800000   0.856213                0.016
+        FP                hyperbole_or_slang      3  258.333333   0.994050                0.010
+        FP    strong_negative_sentiment_only      1   60.000000   0.969097                0.003
+        FP             unpleasant_not_unsafe      1  233.000000   0.720279                0.003
+  Cost-minimising threshold (tfidf_lr) on this set: 0.01 (deployed: 0.20)
+  Cost-minimising threshold (tfidf_lsa) on this set: 0.01 (deployed: 0.20)
+  Cost-minimising threshold (doc2vec_dbow) on this set: 0.01 (deployed: 0.20)
+  Cost-minimising threshold (minilm) on this set: 0.01 (deployed: 0.20)
+
+==========================================================================
+  HEURISTIC LABEL vs INDEPENDENT GOLD LABEL — embeddings
+==========================================================================
+                                        model                     metric  vs_heuristic_label  vs_gold_llm_label   delta
+TF-IDF + LogReg (text-only control) (th=0.50)                     PR-AUC             +0.9238            +0.7112 -0.2127
+TF-IDF + LogReg (text-only control) (th=0.50)   Recall (Safety Coverage)             +0.8667            +0.7408 -0.1258
+TF-IDF + LogReg (text-only control) (th=0.50) Precision (Alert Validity)             +0.8414            +0.6575 -0.1839
+TF-IDF + LogReg (text-only control) (th=0.50)       F2 (recall-weighted)             +0.8615            +0.7225 -0.1390
+TF-IDF + LogReg (text-only control) (th=0.20)                     PR-AUC             +0.9238            +0.7112 -0.2127
+TF-IDF + LogReg (text-only control) (th=0.20)   Recall (Safety Coverage)             +0.9133            +0.8085 -0.1049
+TF-IDF + LogReg (text-only control) (th=0.20) Precision (Alert Validity)             +0.7548            +0.6392 -0.1156
+TF-IDF + LogReg (text-only control) (th=0.20)       F2 (recall-weighted)             +0.8765            +0.7678 -0.1087
+                  LSA 300d + LogReg (th=0.50)                     PR-AUC             +0.9262            +0.7574 -0.1688
+                  LSA 300d + LogReg (th=0.50)   Recall (Safety Coverage)             +0.8767            +0.7408 -0.1358
+                  LSA 300d + LogReg (th=0.50) Precision (Alert Validity)             +0.7898            +0.5693 -0.2205
+                  LSA 300d + LogReg (th=0.50)       F2 (recall-weighted)             +0.8578            +0.6987 -0.1591
+                  LSA 300d + LogReg (th=0.20)                     PR-AUC             +0.9262            +0.7574 -0.1688
+                  LSA 300d + LogReg (th=0.20)   Recall (Safety Coverage)             +0.9267            +0.8366 -0.0900
+                  LSA 300d + LogReg (th=0.20) Precision (Alert Validity)             +0.6619            +0.5323 -0.1296
+                  LSA 300d + LogReg (th=0.20)       F2 (recall-weighted)             +0.8580            +0.7508 -0.1073
+      Doc2Vec PV-DBOW 300d + LogReg (th=0.50)                     PR-AUC             +0.7806            +0.6831 -0.0975
+      Doc2Vec PV-DBOW 300d + LogReg (th=0.50)   Recall (Safety Coverage)             +0.6533            +0.5944 -0.0590
+      Doc2Vec PV-DBOW 300d + LogReg (th=0.50) Precision (Alert Validity)             +0.7778            +0.6453 -0.1325
+      Doc2Vec PV-DBOW 300d + LogReg (th=0.50)       F2 (recall-weighted)             +0.6749            +0.6039 -0.0710
+      Doc2Vec PV-DBOW 300d + LogReg (th=0.20)                     PR-AUC             +0.7806            +0.6831 -0.0975
+      Doc2Vec PV-DBOW 300d + LogReg (th=0.20)   Recall (Safety Coverage)             +0.7433            +0.6930 -0.0504
+      Doc2Vec PV-DBOW 300d + LogReg (th=0.20) Precision (Alert Validity)             +0.6947            +0.5971 -0.0976
+      Doc2Vec PV-DBOW 300d + LogReg (th=0.20)       F2 (recall-weighted)             +0.7331            +0.6714 -0.0617
+  MiniLM-L6-v2 frozen 384d + LogReg (th=0.50)                     PR-AUC             +0.8577            +0.7092 -0.1484
+  MiniLM-L6-v2 frozen 384d + LogReg (th=0.50)   Recall (Safety Coverage)             +0.8300            +0.8789 +0.0489
+  MiniLM-L6-v2 frozen 384d + LogReg (th=0.50) Precision (Alert Validity)             +0.6622            +0.5455 -0.1168
+  MiniLM-L6-v2 frozen 384d + LogReg (th=0.50)       F2 (recall-weighted)             +0.7900            +0.7831 -0.0068
+  MiniLM-L6-v2 frozen 384d + LogReg (th=0.20)                     PR-AUC             +0.8577            +0.7092 -0.1484
+  MiniLM-L6-v2 frozen 384d + LogReg (th=0.20)   Recall (Safety Coverage)             +0.9133            +0.9099 -0.0035
+  MiniLM-L6-v2 frozen 384d + LogReg (th=0.20) Precision (Alert Validity)             +0.5447            +0.5119 -0.0328
+  MiniLM-L6-v2 frozen 384d + LogReg (th=0.20)       F2 (recall-weighted)             +0.8045            +0.7874 -0.0170
+
+  A negative delta is the portion of the score that came from reproducing
+  the labelling rule rather than detecting hazards. Compare each variant's
+  delta against the committed -0.251 (TF-IDF+XGBoost) and -0.183 (DeBERTa).
+  -> E:\textminning\food_saftey_compass\results\embedding_ground_truth_comparison.csv
+
+==========================================================================
+  GOLD PR-AUC — stratified bootstrap CI (1000 resamples, n=772)
+==========================================================================
+     variant  gold_pr_auc  boot_sd  ci95_low  ci95_high  ci95_width
+   tfidf_lsa       0.7574   0.0181    0.7243     0.7929      0.0687
+    tfidf_lr       0.7112   0.0216    0.6671     0.7537      0.0865
+      minilm       0.7092   0.0216    0.6658     0.7503      0.0845
+doc2vec_dbow       0.6831   0.0231    0.6386     0.7314      0.0928
+
+  Widest 95% CI is 0.093 wide. Any gap between two models smaller
+  than roughly half that is not resolved by a 772-row holdout, whatever the
+  point estimates say. Read the committed reference numbers against this.
+    committed reference: Baseline XGBoost (th=0.50) = 0.7279
+    committed reference: DeBERTa-v3 (th=0.50) = 0.8045
+    committed reference: DeBERTa-v3 (th=0.20, deployed) = 0.8045
+  -> E:\textminning\food_saftey_compass\results\embedding_gold_pr_auc_bootstrap.csv
+
+==========================================================================
+  GOLD FALSE-POSITIVE MODES: embeddings vs DeBERTa
+==========================================================================
+       model  n_false_positives  illness_mentioned_not_caused_here  neutral_allergen_mention  share_in_rule_top2_modes  negated_hazard  generic_complaint_no_hazard
+     deberta                197                                 64                        63                    0.6447              17                           22
+    tfidf_lr                162                                 39                        73                    0.6914              12                           12
+   tfidf_lsa                261                                 36                       162                    0.7586              13                           11
+doc2vec_dbow                166                                 32                        95                    0.7651               7                           11
+      minilm                308                                 59                       162                    0.7175              15                           20
+
+  `share_in_rule_top2_modes` is the statistic CLAUDE.md reports as 65% for
+  DeBERTa. A similar share means the failure is inherited from the label.
+
+==========================================================================
+  SEED SPREAD — doc2vec_dbow refitted at seeds [42, 43, 44]
+==========================================================================
+    seed 42: heuristic_test_pr_auc=0.7806  heuristic_test_f2_at_0.20=0.7331  heuristic_test_flag_rate=0.2140  gold_holdout_pr_auc=0.6831  gold_holdout_f2_at_0.20=0.6714  gold_holdout_flag_rate=0.5337
+    seed 43: heuristic_test_pr_auc=0.7838  heuristic_test_f2_at_0.20=0.7314  heuristic_test_flag_rate=0.2300  gold_holdout_pr_auc=0.6684  gold_holdout_f2_at_0.20=0.7139  gold_holdout_flag_rate=0.5829
+    seed 44: heuristic_test_pr_auc=0.7827  heuristic_test_f2_at_0.20=0.7742  heuristic_test_flag_rate=0.2420  gold_holdout_pr_auc=0.6674  gold_holdout_f2_at_0.20=0.6787  gold_holdout_flag_rate=0.5557
+  heuristic_test_pr_auc: mean 0.7824, sd 0.0017, range 0.0032 over 3 seeds
+  gold_holdout_pr_auc: mean 0.6730, sd 0.0088, range 0.0157 over 3 seeds
+  -> E:\textminning\food_saftey_compass\results\embedding_doc2vec_dbow_seed_spread.csv
+
+==========================================================================
+  ALL TECHNIQUES, BOTH GROUND TRUTHS (PR-AUC)
+==========================================================================
+                                                                 ground_truth    PR-AUC  Recall (Safety Coverage)  Precision (Alert Validity)  F2 (recall-weighted)  Total Risk Cost
+model                                                                                                                                                                               
+Baseline XGBoost (th=0.50)                       heuristic label (test split)  0.978544                  0.993333                    0.983498              0.991351          10250.0
+DeBERTa-v3 (th=0.50)                             heuristic label (test split)  0.987419                  0.936667                    0.936667              0.936667          95950.0
+DeBERTa-v3 (th=0.20, deployed)                   heuristic label (test split)  0.987419                  0.946667                    0.913183              0.939775          81350.0
+TF-IDF + LogReg (text-only control) (th=0.50)    heuristic label (test split)  0.923829                  0.866667                    0.841424              0.861498         202450.0
+TF-IDF + LogReg (text-only control) (th=0.20)    heuristic label (test split)  0.923829                  0.913333                    0.754821              0.876520         134450.0
+LSA 300d + LogReg (th=0.50)                      heuristic label (test split)  0.926183                  0.876667                    0.789790              0.857795         188500.0
+LSA 300d + LogReg (th=0.20)                      heuristic label (test split)  0.926183                  0.926667                    0.661905              0.858025         117100.0
+Doc2Vec PV-DBOW 300d + LogReg (th=0.50)          heuristic label (test split)  0.780550                  0.653333                    0.777778              0.674931         522800.0
+Doc2Vec PV-DBOW 300d + LogReg (th=0.20)          heuristic label (test split)  0.780550                  0.743333                    0.694704              0.733070         389900.0
+MiniLM-L6-v2 frozen 384d + LogReg (th=0.50)      heuristic label (test split)  0.857665                  0.830000                    0.662234              0.789975         261350.0
+MiniLM-L6-v2 frozen 384d + LogReg (th=0.20)      heuristic label (test split)  0.857665                  0.913333                    0.544732              0.804463         141450.0
+Baseline XGBoost (th=0.50)                     gold LLM label (fresh holdout)  0.727907                  0.673239                    0.692754              0.677054         585300.0
+DeBERTa-v3 (th=0.50)                           gold LLM label (fresh holdout)  0.804451                  0.856338                    0.619145              0.795395         264350.0
+DeBERTa-v3 (th=0.20, deployed)                 gold LLM label (fresh holdout)  0.804451                  0.890141                    0.615984              0.817382         204850.0
+TF-IDF + LogReg (text-only control) (th=0.50)  gold LLM label (fresh holdout)  0.711170                  0.740845                    0.657500              0.722527         466850.0
+TF-IDF + LogReg (text-only control) (th=0.20)  gold LLM label (fresh holdout)  0.711170                  0.808451                    0.639198              0.767790         348100.0
+LSA 300d + LogReg (th=0.50)                    gold LLM label (fresh holdout)  0.757365                  0.740845                    0.569264              0.698725         469950.0
+LSA 300d + LogReg (th=0.20)                    gold LLM label (fresh holdout)  0.757365                  0.836620                    0.532258              0.750758         303050.0
+Doc2Vec PV-DBOW 300d + LogReg (th=0.50)        gold LLM label (fresh holdout)  0.683086                  0.594366                    0.645260              0.603892         725800.0
+Doc2Vec PV-DBOW 300d + LogReg (th=0.20)        gold LLM label (fresh holdout)  0.683086                  0.692958                    0.597087              0.671397         553300.0
+MiniLM-L6-v2 frozen 384d + LogReg (th=0.50)    gold LLM label (fresh holdout)  0.709234                  0.878873                    0.545455              0.783133         228000.0
+MiniLM-L6-v2 frozen 384d + LogReg (th=0.20)    gold LLM label (fresh holdout)  0.709234                  0.909859                    0.511886              0.787421         175400.0
+  -> E:\textminning\food_saftey_compass\results\embedding_technique_comparison.csv
+
+All embedding artifacts written to: E:\textminning\food_saftey_compass\results

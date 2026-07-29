@@ -1,0 +1,5 @@
+variant,display,representation,dimensions,head,seed,val_pr_auc,val_f2_at_0.20,val_flag_rate
+tfidf_lr,TF-IDF + LogReg (text-only control),"TF-IDF, 2500 features (sparse)",2500,"LogisticRegression(C=1.0, class_weight=balanced)",42,0.9317875258006789,0.864,0.24166666666666667
+tfidf_lsa,LSA 300d + LogReg,"LSA 300d over 2500 TF-IDF features, explained variance 0.471",300,"LogisticRegression(C=1.0, class_weight=balanced)",42,0.9361403704998423,0.8690568978955573,0.26916666666666667
+doc2vec_dbow,Doc2Vec PV-DBOW 300d + LogReg,"PV-DBOW 300d, 40 epochs, vocab 9146, 4800 trained doc vectors, seed 42",300,"LogisticRegression(C=1.0, class_weight=balanced)",42,0.847873243932669,0.7979149959903769,0.23916666666666667
+minilm,MiniLM-L6-v2 frozen 384d + LogReg,"sentence-transformers/all-MiniLM-L6-v2 frozen, 384d, max_seq_length=256, device=cpu",384,"LogisticRegression(C=1.0, class_weight=balanced)",42,0.8796376016781781,0.7997065297138665,0.3358333333333333

@@ -1,0 +1,17 @@
+error_type,primary_mode,count,mean_words,mean_prob,share_of_error_type
+FN,unexplained_fn,43,160.27906976744185,0.05676537410166738,0.632
+FN,unsafe_handling_no_illness,10,212.6,0.04308365995433429,0.147
+FN,buried_in_long_review,6,221.5,0.028168862496367648,0.088
+FN,negation_misread,4,130.5,0.027287757213506236,0.059
+FN,positive_review_with_hazard,3,135.0,0.005718777253101666,0.044
+FN,contamination_no_illness,1,172.0,0.0016937835299640168,0.015
+FN,too_short_weak_signal,1,25.0,0.010005921478908898,0.015
+FP,neutral_allergen_mention,73,175.75342465753425,0.7754441619586997,0.451
+FP,illness_mentioned_not_caused_here,39,184.53846153846155,0.8196638520784242,0.241
+FP,unexplained_fp,21,251.71428571428572,0.8392780494647831,0.13
+FP,generic_complaint_no_hazard,12,167.91666666666666,0.8202198849415989,0.074
+FP,negated_hazard,12,207.25,0.9282777421609666,0.074
+FP,secondhand_or_hearsay,2,308.0,0.992346002468949,0.012
+FP,hyperbole_or_slang,1,181.0,0.9684810846454814,0.006
+FP,strong_negative_sentiment_only,1,60.0,0.9999810571112451,0.006
+FP,unpleasant_not_unsafe,1,233.0,0.9968771381154081,0.006

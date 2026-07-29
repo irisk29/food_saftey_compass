@@ -75,10 +75,17 @@ techniques work/fail, tied to the business problem = 90–100.
   - [src/features.py](src/features.py) — feature engineering lifted out of the postprocessing
     notebook so the fresh holdout set can be enriched identically. Verified to reproduce the
     training CSV exactly on all six derived columns.
+  - [src/embedding_model.py](src/embedding_model.py) — document-embedding classifiers over four
+    text-only representations (TF-IDF control, LSA, Doc2Vec PV-DBOW, frozen MiniLM) behind one
+    class-balanced logistic head, scored on both ground truths through the *existing*
+    `score_variant` / `analyze_errors` code path. This is the **third course technique**.
   - [analysis/error_analysis.py](analysis/error_analysis.py) — rule-based failure-mode
     taxonomy applied to both model errors and the labelling rule itself.
   - [tests/test_losses.py](tests/test_losses.py) — 9 tests; notably a regression guard
     asserting an all-positive model is caught by F2/PR-AUC/flag-rate.
+  - [tests/test_embedding_model.py](tests/test_embedding_model.py) — 21 tests; notably a
+    cross-*process* determinism guard (an in-process one passed while a real gensim defect was
+    live), class-balance parity with the baseline, and a text-only guarantee.
 
 ## Known risks / gaps (most important)
 - **Label leakage: addressed, with one caveat.** `config/settings.py` excludes `stars`,
@@ -115,11 +122,20 @@ Build a comparison of text-mining approaches, not a single classifier:
 1. **TF-IDF + classifier** — ✅ `src/baseline_model.py`. Now class-balanced via
    `scale_pos_weight` so the comparison against the weighted transformer is fair.
    Counted as a *baseline*, not as one of the five course techniques.
-2. **Word/Document embeddings** — ❌ not implemented; deliberately skipped in favour of
-   topic modeling, which connects to the hazard-type research question.
+2. **Document embeddings** — ✅ `src/embedding_model.py` (added 2026-07-29; this item previously
+   read "not implemented; deliberately skipped"). Four text-only representations behind one
+   class-balanced logistic head: TF-IDF (sparse control), LSA 300d, Doc2Vec PV-DBOW 300d trained
+   on our own corpus, and frozen `all-MiniLM-L6-v2` 384d. Course technique **#3**. Completes a
+   lexical → frozen-embedding → fine-tuned-contextual progression. See the findings section above
+   — the result is a **negative** one and is the better for it.
 3. **Fine-tuned transformer** — ✅ DeBERTa-v3-base (`src/sota_model.py`), asymmetric loss
    + lowered threshold, Optuna-tuned on PR-AUC. Course technique #1.
 4. **Topic modeling (LDA/NMF)** — ✅ `src/topic_model.py`. Course technique #2.
+
+That is **3 of the 5** named course techniques. Still unimplemented: word embeddings as a
+standalone representation (partly subsumed — PV-DBOW and MiniLM are both word-level models
+aggregated to documents) and generative LMs (an LLM judge *is* used, but for labelling, not as
+the classifier).
 
 ### Hyperparameter sweep findings (results/optuna_trials.csv, results/best_hyperparameters.json)
 Committed **2026-07-28** (`441c436`). This closes the "no hyperparameter provenance" gap that
@@ -227,6 +243,136 @@ truths**. The earlier mixed 2-/3-epoch table is superseded and its numbers are v
   degenerated to all-positive — sits at flag rate 0.1967, recall 0.921, precision 0.936. The
   collapse claim is now positively refuted, not merely unevidenced.
 - The `fn_gated` variant has still never been run.
+
+### Document-embedding findings (results/performance_embedding_*, results/embedding_*)
+Added **2026-07-29** by `src/embedding_model.py`, on the CPU-only Windows box (no CUDA, no MPS —
+verified, not assumed). This closes the largest remaining gap against the brief: the project
+claimed 2 of the 5 named techniques and had **explicitly declined the embedding family** (see the
+struck-through item 2 in the step-4 plan below). It is **strictly additive** — it writes only
+`results/*embedding*` files, reads the committed `performance_*.csv` for the baseline and DeBERTa
+rows rather than recomputing them, and `analysis.py` / the loss grid / the topic model were not
+re-run.
+
+**Design.** Four *text-only* representations behind one identical class-balanced
+`LogisticRegression` (C=1.0, `class_weight="balanced"`, which reproduces the baseline's
+`scale_pos_weight = n_neg/n_pos` exactly — pinned by a test), fitted on the same 64% train split
+the reported baseline and DeBERTa saw, scored with the **same `score_variant`, thresholds and
+cost model** imported from `analysis/evaluation_pipeline.py`, and error-bucketed with the same
+`analyze_errors` taxonomy. Text-only is deliberate: it is what makes the comparison against
+text-only DeBERTa legitimate, and the handicap runs *against* the embedding model, since the
+baseline additionally gets all seven `TABULAR_FEATURES`.
+
+| Model | heuristic test PR-AUC | gold PR-AUC | gold 95% CI | delta | gold F2@0.20 | gold flag rate | risk cost@0.20 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| DeBERTa-v3 (committed) | 0.9874 | **0.8045** | — | −0.183 | 0.817 | 0.665 | $204,850 |
+| LSA 300d + LogReg | 0.9262 | 0.7574 | 0.724–0.793 | −0.169 | 0.751 | 0.723 | $303,050 |
+| XGBoost baseline (committed) | 0.9785 | 0.7279 | — | −0.251 | 0.677 | 0.447 | $585,300 |
+| TF-IDF + LogReg (text-only control) | 0.9238 | 0.7112 | 0.667–0.754 | −0.213 | 0.768 | 0.582 | $348,100 |
+| MiniLM-L6-v2 frozen 384d + LogReg | 0.8577 | 0.7092 | 0.666–0.750 | −0.148 | 0.787 | **0.817** | **$175,400** |
+| Doc2Vec PV-DBOW 300d + LogReg | 0.7806 | 0.6831 | 0.639–0.732 | −0.098 | 0.671 | 0.534 | $553,300 |
+
+- 🔴 **The headline is a negative result, and it is worth more than the win we expected.** The
+  prior was "a frozen embedding beats or matches TF-IDF on gold while losing to DeBERTa". Half of
+  that is wrong. **No frozen embedding is distinguishable from TF-IDF on the gold holdout**, and
+  the only variant above the XGBoost baseline is **LSA — a linear rotation of the very same
+  TF-IDF matrix** — by 0.029, comfortably inside the bootstrap CI. A *frozen transformer encoder*
+  lands at 0.709, level with a bag of words at 0.711, while the *fine-tuned* one reaches 0.804.
+  The defensible claim: **dense distributed representation is not the source of the transformer's
+  advantage.**
+  ⚠️ Do **not** upgrade this to "the advantage is fine-tuning". MiniLM-L6-v2 is 8× smaller than
+  DeBERTa-v3-base (6 layers / 22M vs 12 / 184M) and was pretrained on a sentence-similarity
+  objective, so freezing, capacity and pretraining objective vary together. This is **not** a
+  clean ablation, and one honest sentence says so. Isolating it needs a frozen DeBERTa-v3-base
+  encoder + linear head, which is one cheap CPU run (feature extraction only, no backprop) and is
+  the single most valuable follow-up available.
+- 🔴 **The ground-truth delta orders the six models by how little each can memorise the labelling
+  rule** — Doc2Vec −0.098, MiniLM −0.148, LSA −0.169, DeBERTa −0.183, TF-IDF+LogReg −0.213,
+  XGBoost −0.251. The mechanism is direct: the heuristic label *is* a keyword rule, so a
+  representation that preserves individual token identity can reproduce it, and one that
+  compresses 2,500 features into 300 dimensions or was never fitted on our vocabulary at all
+  cannot. ⚠️ **The delta is partly mechanical** — a lower heuristic score has less room to fall —
+  so do not quote the ordering alone. Quote the pair that has no such artifact: **TF-IDF and
+  frozen MiniLM reach statistically indistinguishable gold PR-AUC (0.7112 vs 0.7092, each inside
+  the other's CI) from heuristic scores 0.066 apart.** The heuristic metric pays TF-IDF 0.066 of
+  PR-AUC for skill worth *exactly nothing* out of sample. That is the project's central thesis
+  reproduced on a new axis, with a new model family, and it is the strongest sentence this
+  section produces.
+- **Doc2Vec is the worst representation in the project, and the reason is data volume, not
+  domain.** 4,800 training documents is one to three orders of magnitude below what paragraph
+  vectors need. The controlled comparison rules out the alternative explanation: **LSA is fitted
+  on the identical 4,800 documents** and beats it by 0.074 on gold. So a *learned* embedding
+  loses to a *linear projection* of the same data at this scale — the learning had too little
+  data to pay for itself. Report this as a "when does the technique fail" finding, which is the
+  same move the topic-model section makes.
+- 🔴 **Every model inherits the labelling rule's blind spots, and the fine-tuned one inherits
+  them least** (`results/embedding_vs_deberta_fp_modes.csv`). Share of gold false positives
+  sitting in the rule's own top two failure modes (`illness_mentioned_not_caused_here` +
+  `neutral_allergen_mention`): **DeBERTa 64.5%** (the figure the error-analysis section rounds to
+  65%), TF-IDF 69.1%, frozen MiniLM 71.8%, LSA 75.9%, Doc2Vec 76.5%. This **upgrades the existing
+  "the model inherits its teacher's blind spots" finding from an observation about one model to a
+  dose–response across five**, in which the only model that partially escapes is the only one
+  allowed to update its representation on the task.
+- **And the dense representations make one of those two modes distinctly worse, for a knowable
+  reason.** `neutral_allergen_mention` is 45.1% of TF-IDF's gold FPs but 62.1% of LSA's, 57.2% of
+  Doc2Vec's and 52.6% of MiniLM's. In a dense space "they have a great gluten-free menu" and "the
+  gluten made me ill" are near neighbours — the geometry actively destroys a distinction the
+  sparse representation at least retains as separate coordinates. This is the mechanistic *why*
+  behind the embedding models' low precision (0.51–0.64 on gold), and it is the same phenomenon
+  `analysis/error_analysis.py` already names as "the labelling rule leaking into the model",
+  amplified by the representation rather than caused by it.
+- ⚠️ **Frozen MiniLM posts the lowest total risk cost in the entire project ($175,400 vs
+  DeBERTa's $204,850) and this must NOT be reported as a win.** It flags **81.7%** of a holdout
+  whose funnel hazard rate is 46.0%. This is the identical pathology the loss grid already
+  documented for `focal_asymmetric@5` (75.0% flag rate crowning the cost and F2 columns): under a
+  100:1 cost ratio over-flagging is nearly free. Its high recall (0.910, *above* DeBERTa's 0.890,
+  with 32 missed hazards against 39) is bought with precision 0.512. PR-AUC ranks it 0.095 below
+  DeBERTa and PR-AUC is the metric to believe. That the new model family reproduces this
+  pitfall independently is corroboration of the project's own methodological finding.
+- **The 0.20 threshold does not transfer here either.** Gold flag rates run 0.534–0.817 against a
+  46.0% funnel rate, while the same models flag 0.214–0.335 on the test split. Third independent
+  instance of the same thesis.
+- **Reproducibility: exact, and it took three fixes to gensim to get there.** Every variant is now
+  bit-identical **across processes** at a fixed seed (guarded by
+  `test_doc2vec_is_identical_across_PROCESSES`). Three sources of non-determinism had to be
+  pinned, and the third was found only by measurement after the first two looked sufficient:
+  `workers=1`; a deterministic `hashfxn` on the model; and — the real defect —
+  `Doc2Vec.infer_vector` initialises the new document vector via
+  `pseudorandom_weak_vector(size, seed_string=...)`, whose signature is
+  `(size, seed_string=None, hashfxn=hash)`. **It uses the module-default salted `hash` and ignores
+  the model's `hashfxn` entirely**, so the constructor argument that makes *training*
+  reproducible has no effect on *inference*. Symptom: the same fit in two interpreters produced
+  bit-identical word vectors (md5 `1c0bd6c2…`) and different inferred vectors, with gold PR-AUC at
+  0.6825 / 0.6833 / 0.6836. `Doc2VecRepresentation._deterministic_gensim_init()` scopes a patch
+  over it. The wobble was 0.0011 — immaterial against the 0.0165 seed spread — so **no reported
+  conclusion ever depended on it**; the point is that "reproducible" was false as stated until it
+  was measured.
+- **Doc2Vec seed spread, since exactness at one seed is not authority**
+  (`results/embedding_doc2vec_dbow_seed_spread.csv`, seeds 42/43/44): gold PR-AUC 0.6831, 0.6684,
+  0.6674 — mean 0.6730, sd 0.0088, **range 0.0157**. On the heuristic test split the range is
+  0.0032. Note the shape: **the seed-to-seed range is 4.9× larger on gold than on the heuristic
+  label**, the same direction as the loss grid's 33× spread ratio. Doc2Vec's deficit against LSA
+  (0.074) is 4.7× its own seed range, so that gap is real; its deficit against TF-IDF (0.028) is
+  under 2× it and is not resolved.
+- **Sampling noise, which the project had never quantified**
+  (`results/embedding_gold_pr_auc_bootstrap.csv`): a 1,000-replicate class-stratified bootstrap
+  of the 772-row holdout gives 95% CIs **0.069–0.093 wide** (sd 0.018–0.023). This is a different
+  quantity from the 0.054 training-noise floor and it applies to *every* gold number in the
+  project, including the committed ones. It is the honest reason the LSA-over-baseline margin
+  (0.029) and the LSA-over-TF-IDF margin (0.046) must both be called unresolved. ⚠️ It cannot be
+  turned into a difference test against the baseline or DeBERTa: their probability arrays were
+  never persisted to `results/` (only summary metrics were), so the paired resample is unavailable
+  without re-running `analysis.py` and overwriting committed artifacts. **Persisting per-row
+  probabilities is the cheapest rigour upgrade left in the repo.**
+- **Two smaller true things.** (a) `src/topic_model.py`'s docstring says gensim "breaks against
+  numpy 2", which is why its NPMI is hand-rolled — that was true of gensim 4.3.x and is **not**
+  true of 4.4.0, which installs and runs here under Python 3.13 / numpy 2 / scipy 1.17. The topic
+  model was left alone regardless, because its artifacts are committed and cited. (b) The
+  enriched CSV holds **3 duplicate review texts** (7,497 unique of 7,500) and one duplicate pair
+  **straddles the train/test boundary**, so 1 of 1,500 test-split rows shares text with a
+  training row. Found by the embedding leakage guard. It affects the baseline and DeBERTa
+  identically, bounds any test-split metric error at 1/1500 = 0.07%, and **the gold holdout
+  remains at exactly zero overlap**, which is the number that matters and which
+  `verify_no_text_overlap` re-checks on every run.
 
 ### Topic-modeling findings so far (results/topic_model_*.csv)
 All numbers below are from the committed artifacts (regenerated 2026-07-27 after the

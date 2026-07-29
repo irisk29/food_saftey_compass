@@ -47,6 +47,28 @@ optuna>=3.6
 # back to report_to="none".
 wandb>=0.16
 
+# --- Document embeddings (src/embedding_model.py) -----------------------------
+# Added 2026-07-29 with the third course technique.
+#
+# gensim supplies Doc2Vec / PV-DBOW. Note src/topic_model.py's docstring says gensim
+# "breaks against numpy 2" — that was true of gensim 4.3.x and is the reason NPMI
+# coherence is hand-implemented there. It is NOT true of gensim >= 4.4: 4.4.0 installs
+# and runs on this box under Python 3.13 / numpy 2 / scipy 1.17. The floor is set at
+# 4.4 for that reason, and the topic model still uses its own NPMI (unchanged — that
+# code is committed and its artifacts are cited).
+gensim>=4.4
+# sentence-transformers supplies the frozen pretrained document embedding
+# (all-MiniLM-L6-v2, 384d, 22M parameters). It runs on CPU in seconds: 8,272 reviews
+# encode in well under a minute on the Windows/CPU analysis machine. The model is
+# ~90 MB and is downloaded from the HuggingFace hub on first use.
+#
+# OPTIONAL BY DESIGN. If it cannot be installed, or the hub is unreachable,
+# `python -m src.embedding_model --variants tfidf_lr tfidf_lsa doc2vec_dbow` runs
+# without it and `tfidf_lsa` (TF-IDF -> TruncatedSVD, i.e. LSA) is the documented
+# dense fallback. src/embedding_model.py catches the failure per variant, prints it,
+# and continues rather than aborting the run.
+sentence-transformers>=2.7
+
 # --- Text features ------------------------------------------------------------
 # VADER lexicon is downloaded on first use by src/features.py.
 nltk>=3.8

@@ -68,7 +68,46 @@ against the baseline's **116 misses and $585,300, 2.9× higher**.
 |---|---|---|
 | **Fine-tuned DeBERTa-v3-base** | Course technique #1 — transfer learning, with a custom `AsymmetricSafetyLoss` (`focal_asymmetric`, w=50) and th=0.20 | [`src/sota_model.py`](src/sota_model.py), [`src/losses.py`](src/losses.py) |
 | **Topic modelling (LDA + NMF)** | Course technique #2 — unsupervised discovery of *hazard types* | [`src/topic_model.py`](src/topic_model.py) |
+| **Document embeddings (Doc2Vec / LSA / frozen MiniLM)** | Course technique #3 — the middle rung between lexical and contextual, four representations behind one classifier head | [`src/embedding_model.py`](src/embedding_model.py) |
 | **TF-IDF + XGBoost** | **Baseline, not a course technique** — the thing the transformer has to beat | [`src/baseline_model.py`](src/baseline_model.py) |
+
+**Document embeddings.** The comparison used to jump straight from sparse lexical to
+fine-tuned contextual, which leaves the obvious question unasked: how much of DeBERTa's
+advantage is *dense representation* and how much is *fine-tuning*? Four text-only
+representations feed one identical class-balanced `LogisticRegression`, so the table varies the
+representation and nothing else — TF-IDF (sparse control), **LSA** 300d, **Doc2Vec PV-DBOW**
+300d trained on our own corpus, and **frozen `all-MiniLM-L6-v2`** 384d, which is fitted on our
+data not at all. Gold-holdout PR-AUC: **LSA 0.757, TF-IDF 0.711, MiniLM 0.709, Doc2Vec 0.684**,
+against the committed baseline's 0.728 and DeBERTa's 0.804.
+
+Two findings, and the second is the one that matters:
+
+- **No frozen embedding beats the baseline by a resolvable margin, and none comes near
+  DeBERTa.** Only LSA — a linear rotation of the same TF-IDF matrix — is above the baseline at
+  all, by 0.029, which is well inside the stratified bootstrap CI on a 772-row holdout
+  (widest 95% CI 0.093 wide; [`results/embedding_gold_pr_auc_bootstrap.csv`](results/embedding_gold_pr_auc_bootstrap.csv)).
+  Learned paragraph vectors are the *worst* representation here: 4,800 training documents is one
+  to three orders of magnitude below what PV-DBOW needs, and the cause is data volume rather than
+  corpus mismatch, because LSA sees the identical 4,800 documents and beats it by 0.074.
+  **Dense distributed representation is not where the transformer's advantage comes from** — a
+  frozen transformer encoder scores 0.709, statistically level with plain TF-IDF, and the
+  fine-tuned one scores 0.804. We did not isolate fine-tuning as the sole cause: MiniLM-L6-v2 is
+  also 8× smaller than DeBERTa-v3-base (6 layers / 22M vs 12 / 184M) and was pretrained on a
+  sentence-similarity objective, so capacity and pretraining objective are confounded with
+  freezing. The defensible claim is the negative one: *frozen* dense embeddings do not close
+  the gap.
+- **The ground-truth gap shrinks monotonically as a representation loses the ability to
+  memorise the keyword rule.** Heuristic→gold PR-AUC deltas: Doc2Vec **−0.098**, MiniLM
+  **−0.148**, LSA **−0.169**, DeBERTa **−0.183**, TF-IDF+LogReg **−0.213**, XGBoost baseline
+  **−0.251**. The sharpest single fact: TF-IDF and frozen MiniLM land on *statistically
+  indistinguishable* gold scores (0.711 vs 0.709) from heuristic scores 0.066 apart — so the
+  heuristic metric awards TF-IDF 0.066 of PR-AUC for skill that is worth exactly nothing
+  out of sample. That is the project's central thesis, reproduced on a new axis with a new
+  model family.
+
+See [`results/embedding_technique_comparison.csv`](results/embedding_technique_comparison.csv)
+for all three techniques on both ground truths in one table, and `CLAUDE.md` for the full
+reading including the caveats.
 
 **The custom loss.** [`src/losses.py`](src/losses.py) implements three formulations behind one
 interface: `pos_weight` (plain `BCEWithLogitsLoss(pos_weight=w)`, the honest control),
@@ -105,7 +144,24 @@ traced across the two. The result: **65% of the model's false positives on the g
 into the labelling rule's own top two failure modes** — 32.5% `illness_mentioned_not_caused_here`
 plus 32.0% `neutral_allergen_mention`. The model inherited its teacher's blind spots. A keyword
 rule cannot represent causation, only co-occurrence, and the transformer trained on that rule
-reproduces exactly that confusion.
+reproduces exactly that confusion. (Precisely: those two modes are 45.8% and 11.4% of the
+*rule's* own 201 false flags, 57.2% together — the ordering differs, but both of the model's
+dominant error modes are errors its teacher makes.)
+
+**Crossing the two techniques.**
+[`analysis/topic_error_integration.py`](analysis/topic_error_integration.py) projects all 772
+gold-holdout reviews onto the frozen NMF K=6 topics and reconstructs the deployed model's
+predictions from the committed error-detail CSV, so neither model is retrained. The two
+techniques succeed on **opposite halves of the hazard vocabulary**: in topic 1 (gluten/coeliac —
+the one topic the sweep found cleanly, NPMI +0.43, lift 5.28) the classifier scores precision
+**0.304** over 69 alerts; in topic 4 (the diffuse food-poisoning mass the topic model could not
+subdivide, lift 1.39) it scores **0.961** at recall 0.980. Per-topic precision correlates with
+per-topic base rate at ρ = +0.89, so quote both. The regex taxonomy independently agrees on
+where the errors sit: 37 of 63 `neutral_allergen_mention` false positives land in topic 1
+(odds ratio 15.9, Fisher p = 7.4e-14, post-hoc). Usable reading: topic assignment is a
+zero-label **routing** signal, which is a real job even though hazard-type classification was a
+negative result. See [`results/topic_error_integration.csv`](results/topic_error_integration.csv)
+and [`results/topic_error_integration_crosstabs.txt`](results/topic_error_integration_crosstabs.txt).
 
 ## 5. Limitations we are stating ourselves
 
@@ -124,6 +180,27 @@ reproduces exactly that confusion.
   do, and is a mechanistic result rather than a win.
 - The gold labels come from an LLM judge, not a domain expert, so ground truth #2 is *independent
   of* the heuristic but not infallible.
+- **The embedding comparison does not resolve its own top of table.** LSA's 0.029 lead over the
+  XGBoost baseline is smaller than half the bootstrap CI width on a 772-row holdout, so the
+  correct statement is "no frozen embedding is *distinguishable* from TF-IDF on gold", not "LSA
+  wins". The claims that survive the interval are the large ones: Doc2Vec is genuinely worse
+  (−0.074 against LSA) and DeBERTa is genuinely better (+0.047 against LSA, +0.095 against
+  Doc2Vec). The logistic head's `C` was left at 1.0 for every variant and never tuned — a
+  deliberate choice, since the project already showed validation cannot resolve differences this
+  small, but it does mean each representation is reported at an untuned operating point.
+  The claims that do survive the interval: Doc2Vec is genuinely worse than LSA (−0.074) and
+  DeBERTa is genuinely better than every embedding variant (+0.047 over LSA, +0.095 over frozen
+  MiniLM, +0.121 over Doc2Vec).
+- **Frozen MiniLM posts the lowest total risk cost of any model in the project** ($175,400 vs
+  DeBERTa's $204,850) and this is *not* evidence it is the better model. It flags 81.7% of a
+  holdout whose hazard rate is 46%. Under a 100:1 cost ratio over-flagging is nearly free, which
+  is the same pathology the loss grid already found in `focal_asymmetric@5`. PR-AUC ranks MiniLM
+  0.095 below DeBERTa and is the metric to believe.
+- **The enriched dataset contains 3 duplicate review texts** (7,497 unique of 7,500), one of
+  which straddles the train/test boundary, so 1 of 1,500 test-split rows shares its text with a
+  training row. Found while building the embedding leakage guard. It affects the baseline and
+  DeBERTa identically, bounds any test-split metric error at 0.07%, and does not touch the gold
+  holdout, whose overlap with training text remains verified at exactly zero.
 
 ## 6. Repository map
 
@@ -131,12 +208,12 @@ reproduces exactly that confusion.
 |---|---|
 | [`preprocessing/`](preprocessing) | `final_project_preprocessing.ipynb` — filters Yelp businesses to food/restaurants, streams and keyword-filters reviews, builds the heuristic `is_hazard` label |
 | [`postprocessing/`](postprocessing) | `final_project_postprocessing.ipynb` — lexicon/tabular enrichment (medical-lexicon density, VADER negative intensity, negation-window flag); the committed `enriched_allergy_hazard_dataset.csv` and three EDA figures |
-| [`src/`](src) | Modelling core: [`data_pipeline.py`](src/data_pipeline.py) (64/16/20 splits), [`features.py`](src/features.py) (enrichment lifted out of the notebook so fresh data can be scored identically), [`baseline_model.py`](src/baseline_model.py), [`sota_model.py`](src/sota_model.py), [`losses.py`](src/losses.py), [`topic_model.py`](src/topic_model.py) |
+| [`src/`](src) | Modelling core: [`data_pipeline.py`](src/data_pipeline.py) (64/16/20 splits), [`features.py`](src/features.py) (enrichment lifted out of the notebook so fresh data can be scored identically), [`baseline_model.py`](src/baseline_model.py), [`sota_model.py`](src/sota_model.py), [`losses.py`](src/losses.py), [`topic_model.py`](src/topic_model.py), [`embedding_model.py`](src/embedding_model.py) |
 | [`labeling/`](labeling) | LLM-as-judge pipeline: [`build_holdout_pool.py`](labeling/build_holdout_pool.py), [`create_gold_dataset.py`](labeling/create_gold_dataset.py), and the two gold sets plus the candidate pool |
 | [`analysis/`](analysis) | [`evaluation_pipeline.py`](analysis/evaluation_pipeline.py) (both ground truths, cost model, PR and cost curves) and [`error_analysis.py`](analysis/error_analysis.py) |
 | [`results/`](results) | Every committed artifact: performance tables, `ground_truth_comparison.csv`, `label_quality.json`, the loss grid, topic-model sweep/topics/lift, error-analysis summaries and detail CSVs, PR and cost curves, run logs |
 | [`config/`](config) | [`settings.py`](config/settings.py) — paths, feature allow-list (leakage exclusions documented inline), loss variant, threshold, metric choices |
-| [`tests/`](tests) | [`test_losses.py`](tests/test_losses.py) — 9 tests over the three loss formulations |
+| [`tests/`](tests) | [`test_losses.py`](tests/test_losses.py) — 9 tests over the three loss formulations; [`test_embedding_model.py`](tests/test_embedding_model.py) — 21 tests over leakage, class-balance parity with the baseline, cross-process determinism and the text-only guarantee |
 | [`slides/`](slides) | **[`DECK.md`](slides/DECK.md) — the presentation** (Marp; 18 presented slides + Q&A appendix, every number traced to a file in `results/`), rendered to `deck.pdf` / `deck.html`. [`SLIDES_SKELETON.md`](slides/SLIDES_SKELETON.md) is the superseded planning outline. |
 | [`docs/reviews/`](docs/reviews) | Archived external review passes (`PROFESSOR_REVIEW*.md`) and `final_work_overview.md`, moved out of the repo root |
 
@@ -154,6 +231,13 @@ python verify_setup.py        # preflight — dependencies, data files, holdout 
 
 python analysis.py            # final evaluation: both models, both ground truths, all artifacts
 python -m src.topic_model     # LDA + NMF sweep
+
+# Document embeddings (course technique #3). CPU-only, ~6 min for all four variants
+# including the 3-seed Doc2Vec spread study. Writes only results/*embedding* files
+# and overwrites nothing that analysis.py produced.
+python -m src.embedding_model --seeds 42 43 44
+python -m src.embedding_model --variants tfidf_lr tfidf_lsa doc2vec_dbow   # no network needed
+
 python grid_search_analysis.py    # loss-variant grid (resumable; skips completed cells)
 python main.py                # optional Optuna hyperparameter sweep (8-12h on GPU)
 pytest tests/                 # loss-function tests
