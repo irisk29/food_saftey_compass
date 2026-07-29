@@ -24,19 +24,23 @@ style: |
 <!--           npx @marp-team/marp-cli@latest slides/DECK.md -o deck.pptx  -->
 <!--   Present: npx @marp-team/marp-cli@latest -s slides/                  -->
 <!--                                                                       -->
-<!-- STRUCTURE: 20 rendered sections =                                      -->
-<!--   slides 1-18  PRESENTED  (title, hook, 15 content slides, thank-you)  -->
-<!--   slides 19-20 APPENDIX   (Q&A back-pocket, figure + rehearsal notes)  -->
+<!-- STRUCTURE: 22 rendered sections =                                      -->
+<!--   slides 1-20  PRESENTED  (title, hook, 17 content slides, thank-you)  -->
+<!--   slides 21-22 APPENDIX   (Q&A back-pocket, figure + rehearsal notes)  -->
 <!--                           -> NOT presented; delete before submitting   -->
-<!--                              the deck if you want a clean 18.          -->
+<!--                              the deck if you want a clean 20.          -->
 <!--                                                                       -->
-<!-- TIMING: 15 content slides at ~55 s = 13.8 min, +30 s for title/hook/   -->
-<!-- close = ~14.3 min. Slides 5-7 and 9-12 are the differentiators — do    -->
-<!-- NOT rush them. If running long: drop slide 16 (Limitations; every item -->
-<!-- also lives on its home slide) and compress 13 to 30 s.                 -->
+<!-- TIMING: 17 content slides at ~50 s = 14.2 min, +30 s for title/hook/   -->
+<!-- close = ~14.7 min. That is tight against the 15-min cap, so slide 18   -->
+<!-- (Limitations) is now the DEFAULT cut, not a contingency: every item on  -->
+<!-- it also lives on its home slide. Cutting it lands at ~13.8 min.         -->
+<!-- Slides 5-7 and 9-12 plus 15 and 17 are the differentiators — do NOT    -->
+<!-- rush them.                                                             -->
 <!--                                                                       -->
 <!-- EVERY number on every slide traces to a file in results/ or labeling/. -->
-<!-- The "Evidence:" line names it. Verified against artifacts 2026-07-28.  -->
+<!-- The "Evidence:" line names it. Verified against artifacts 2026-07-29,   -->
+<!-- including the three techniques, the bootstrap intervals and the         -->
+<!-- topic x error integration added that day.                              -->
 <!-- ===================================================================== -->
 
 <!-- _class: lead -->
@@ -268,10 +272,24 @@ features**; the transformer sees raw text alone. The advantaged model is the one
 
 **The flawed label did not merely inflate scores — it inverted the comparison between techniques.**
 
-Deployed operating point on gold: recall **0.890**, precision 0.616, F2 **0.817**, 39 FN / 197 FP,
-risk cost **$204,850** vs the baseline's **$585,300** (**2.9× cheaper**).
+### With error bars, because 772 rows is not infinite
 
-<span class="ev">Evidence: results/performance_gold_llm_label_fresh_holdout.csv · results/performance_heuristic_label_test_split.csv · results/ground_truth_comparison.csv</span>
+Deployed operating point on gold, 20,000-resample bootstrap: recall **0.890 [0.857, 0.922]**,
+precision 0.616 [0.574, 0.658], F2 **0.817 [0.787, 0.845]**, **39 missed [28, 51]**, risk cost
+**$204,850 [$148,900, $264,950]** vs the baseline's $585,300. So "89% recall" is an *estimate*,
+±3 points — not a specification.
+
+- The comparison itself is **paired** on the same resampled rows: **−29 missed hazards
+  [−44, −15]**, exact McNemar **p = 1.5e-4**. That is the right test — overlapping marginal
+  intervals are compatible with a difference that is reliably one-signed.
+- ⚠️ **Two limits we state ourselves.** The paired test runs against a **text-only TF-IDF control**,
+  because the XGBoost baseline's per-row errors were never persisted — so the headline "116 vs 39
+  missed" has a point estimate and **no interval**. And **PR-AUC has no interval at all**: no
+  checkpoint is committed and `results/` stores probabilities only for error rows.
+- ⚠️ These intervals hold the **trained model fixed**. They *compose* with the up-to-**0.054**
+  training non-determinism on slide 12 — quoting either alone understates total uncertainty.
+
+<span class="ev">Evidence: results/performance_gold_llm_label_fresh_holdout.csv · results/performance_heuristic_label_test_split.csv · results/bootstrap_ci_gold_llm_label_fresh_holdout.{csv,md} · results/bootstrap_ci_paired_*.csv · results/bootstrap_ci_mcnemar_*.csv</span>
 
 ---
 
@@ -393,6 +411,40 @@ LDA only from committed artifacts. We caught this ourselves and moved the headli
 
 ---
 
+## Technique 3 — Document embeddings: *is it the representation, or the fine-tuning?*
+
+Slide 10 showed a transformer beating a bag of words on honest ground truth. **Why?** Four
+**text-only** representations, one identical class-balanced logistic head, same splits, same
+metrics, same cost model:
+
+| Representation | Gold PR-AUC | 95% CI |
+|---|---:|---:|
+| **DeBERTa-v3 — *fine-tuned*** | **0.8045** | — |
+| LSA 300d (TF-IDF → SVD) | 0.7574 | [0.724, 0.793] |
+| <span class="small">Baseline: TF-IDF + XGBoost + metadata</span> | 0.7279 | — |
+| TF-IDF + LogReg (sparse control) | 0.7112 | [0.667, 0.754] |
+| **MiniLM-L6-v2 — *frozen*** | 0.7092 | [0.666, 0.750] |
+| Doc2Vec PV-DBOW 300d | 0.6831 | [0.639, 0.732] |
+
+- **No frozen embedding is distinguishable from a bag of words.** The only variant above the
+  baseline is **LSA — a linear rotation of the very same TF-IDF matrix** — by 0.029, comfortably
+  inside the CI.
+- A **frozen transformer encoder sits at 0.709, level with TF-IDF at 0.711**, while the
+  **fine-tuned** one reaches **0.804**.
+
+<span class="big">Dense distributed representation is not the source of the transformer's advantage.</span>
+
+- ⚠️ **We do not upgrade that to "the advantage is fine-tuning."** MiniLM differs from DeBERTa in
+  freezing, **capacity** (6 layers / 22M vs 12 / 184M) *and* pretraining objective simultaneously —
+  not a clean ablation. A **frozen DeBERTa encoder + linear head** would settle it in one CPU run.
+- **Doc2Vec's failure is attributed by control, not guessed:** LSA sees the *identical* 4,800
+  documents and beats it by 0.074. A learned embedding losing to a linear projection of the same
+  data is a **data-volume** verdict, not a domain one.
+
+<span class="ev">Evidence: src/embedding_model.py · results/embedding_technique_comparison.csv · results/performance_embedding_*.csv · results/embedding_gold_pr_auc_bootstrap.csv · 21 unit tests in tests/test_embedding_model.py</span>
+
+---
+
 ## Where the *model* still fails — and it inherits its teacher's blind spots
 
 DeBERTa on the gold holdout: **197 false positives, 39 false negatives.** Same taxonomy as the label-audit slide.
@@ -422,7 +474,50 @@ analytical result in the project, because it traces a model failure back to a *l
 - 🔍 **5 of 23 gold labels are arguable** at LLM confidence *high*. Ground truth #2 is
   *independent*, not infallible — we say it before anyone else does.
 
-<span class="ev">Evidence: results/error_analysis_deberta_gold_*.md · results/gold_fn_handread.md · analysis/rebucket_errors.py</span>
+### And it is a *dose–response*, across all five models we trained
+
+| DeBERTa *(fine-tuned)* | TF-IDF | MiniLM *(frozen)* | LSA | Doc2Vec |
+|---:|---:|---:|---:|---:|
+| <span class="win">**64.5%**</span> | 69.1% | 71.8% | 75.9% | <span class="bad">**76.5%**</span> |
+
+Share of each model's false positives landing in those same two label failure modes. **The only
+model that partially escapes its teacher is the only one allowed to update its representation.**
+With a mechanism: `neutral_allergen_mention` is 45.1% of TF-IDF's false positives but **62.1% of
+LSA's** — in dense space *"great gluten-free menu"* and *"the gluten made me ill"* become
+neighbours, so the geometry **destroys a distinction sparse features retain**.
+
+<span class="ev">Evidence: results/error_analysis_deberta_gold_*.md · results/gold_fn_handread.md · results/embedding_vs_deberta_fp_modes.csv · analysis/rebucket_errors.py</span>
+
+---
+
+## Crossing the two techniques — where each one is trustworthy
+
+The topic model and the classifier were built separately. Projecting all **772 holdout rows** onto
+the **frozen NMF K=6 topics** shows they succeed on **opposite halves of the vocabulary**.
+
+| NMF topic | rows | gold hazard rate | alerts | **precision** | share of the 197 FPs |
+|---|---:|---:|---:|---:|---:|
+| **1 — gluten / coeliac** <span class="small">(NPMI +0.43, lift 5.28)</span> | 202 | 12.9% | 69 | <span class="bad">**0.304**</span> | <span class="bad">24.4%</span> |
+| **4 — food poisoning** <span class="small">(lift 1.39, the diffuse mass)</span> | 104 | 96.2% | 102 | <span class="win">**0.961**</span> | 2.0% |
+
+<span class="big">The one topic we found cleanly is where the classifier is least trustworthy — and the mass we failed to subdivide is where it is near-perfect.</span>
+
+- **Two independent instruments agree**, which is what makes this more than a coincidence: 37 of 63
+  `neutral_allergen_mention` false positives land in topic 1 (**OR 15.9, Fisher p = 7.4e-14**), and
+  53 of 64 `illness_mentioned_not_caused_here` land in topics 0 and 5 with **none in topic 4**
+  (OR 3.8, p = 2.2e-4). Both survive Bonferroni over all 54 cells.
+- ⚠️ **Own the confound:** per-topic precision tracks the topic's base rate at **ρ = +0.89**, so it
+  measures how far the *vocabulary* settles the question, not model skill alone. Recall is far
+  flatter (spread 0.19 vs 0.66) — coverage is much less vocabulary-dependent than trustworthiness.
+  Post-hoc, single run.
+
+### The business payoff — a *zero-label* routing signal
+
+Of **513 alerts**: the **102 in topic 4 are right 96% of the time** → escalate on light review.
+The **69 in topic 1 are right 30% of the time** → send to a human. Delivered by the technique whose
+headline evaluation was a **negative** result.
+
+<span class="ev">Evidence: analysis/topic_error_integration.py · results/topic_error_integration.csv · results/topic_error_integration_crosstabs.txt</span>
 
 ---
 
@@ -436,10 +531,14 @@ analytical result in the project, because it traces a model failure back to a *l
 | 4 | **th=0.20 does not transfer.** Gold flag rate 0.659–0.750 vs a 46.0% base rate; gold precision 0.57–0.63 | Threshold was tuned against the heuristic label. Same models flag 18.6–20.8% on validation. **One more instance of the central thesis** — re-tune per distribution. |
 | 5 | **Hyperparameters**: 3-trial sweep only; reported system trained at lr 1.814e-05, sweep best 1.835e-05 | A 1.1% difference, far inside the 0.054 noise floor. `analysis.py` now warns on the mismatch. |
 | 6 | **LDA irreproducible** across machines; **46.0% is a funnel rate**; `fn_gated` never run | All three stated on their own slides, unprompted |
+| 7 | **No interval on PR-AUC, and none on the headline baseline gap** | No checkpoint is committed and only error-row probabilities are stored, so PR-AUC stays a point estimate; the baseline's per-row errors were never persisted, so "116 vs 39 missed" cannot be paired-tested. The bootstrap we *do* have holds the trained model fixed and **composes** with row 1's 0.054. |
+| 8 | **A *frozen* MiniLM matches the fine-tune on recall** — +7 missed [−7, +21], p = 0.39 | Fine-tuning wins on **precision** (+0.104 [+0.078, +0.131]) and on the operating point as a whole, not on recall. It flags **81.7%** of the holdout to get there. We reworded our own claim rather than keep the flattering one. |
+| 9 | **Two defects we found in our own tooling** | `gensim`'s `infer_vector` ignores the model's `hashfxn`, so inference was never reproducible (0.6825 / 0.6833 / 0.6836 across interpreters) — patched, and the guard now spawns **subprocesses** because the in-process test passed the whole time the defect was live. And 3 duplicate texts in the enriched CSV, one pair straddling train/test: 1 of 1,500 test rows, bounding the error at **0.07%**. Gold-holdout overlap remains exactly **0**. |
 
 <!--
-SPEAKER: This slide is optional if time is short — every item also lives on its home slide.
-But presenting it as a block reads as maturity. Ten seconds per row, do not read verbatim.
+SPEAKER: This slide is the DEFAULT CUT at 17 content slides — every item also lives on its
+home slide, and dropping it lands the deck at ~13.8 min. Present it only if you are ahead of
+time; as a block it reads as maturity. Ten seconds per row, do not read verbatim.
 -->
 
 ---
@@ -453,23 +552,34 @@ explained *why* it errs, bucket by bucket → **caught our gold set 89% contamin
 verified zero-overlap holdout (772 rows) → trained 8 loss configurations under one protocol →
 **found we could not tell them apart on our own label at all** (spread 0.0030 vs 0.0992, ρ = −0.24)
 → **measured our own run-to-run noise** and let it forbid ranking → reported *shape*, not
-leaderboard → showed the model's residual false alarms **are the label's own inherited blind spots**
+leaderboard → **isolated where the transformer's advantage does *not* come from** (four frozen
+representations, none separable from a bag of words) → showed the model's residual false alarms
+**are the label's own inherited blind spots**, as a dose–response across all five models → **crossed
+the two techniques** to say which hazard vocabularies the classifier can be trusted on → put
+**error bars** on the headline
 
 ### Answers to the two research questions
 
 - **① Detection: yes, and the honest number is lower than the flattering one.** Gold PR-AUC
-  **0.804** vs 0.987 against our own label. Recall 0.890 at 100:1 cost, **$204,850** risk cost
-  against the baseline's **$585,300**.
+  **0.804** vs 0.987 against our own label. Recall **0.890 [0.857, 0.922]** at 100:1 cost,
+  **$204,850** risk cost against the baseline's **$585,300**, and **−29 missed hazards [−44, −15]**
+  against a text-only control. What the transformer buys is **precision at a given recall** — a
+  frozen encoder matches its recall and pays 81.7% flag rate for it.
 - **② Discovery: partially, and the failure is informative.** Allergen/celiac hazards separate
   cleanly and unsupervised (lift **5.28**, NPMI **+0.43**); the food-poisoning mass (69%) does not.
+  The negative result then became **operationally useful**: the topics predict *where the classifier
+  is trustworthy* (precision 0.961 vs 0.304).
 
 ### Business recommendation
 
 Deploy as a **screening funnel**, not a verdict — threshold **informed by** the 100:1 asymmetry but
-capped well above its literal optimum of 0.01, human triage downstream, and the over-flagging rate
-quoted honestly to whoever staffs that triage.
+capped well above its literal optimum of 0.01, human triage downstream, the over-flagging rate
+quoted honestly to whoever staffs that triage, and **alerts routed by topic** so the 96%-precision
+stream and the 30%-precision stream get different amounts of human attention.
 
-**Future work:** token-attribution XAI · ordinal risk tiers · multi-seed error bars · cross-platform transfer
+**Future work:** frozen-DeBERTa ablation to isolate fine-tuning · multi-seed error bars ·
+per-row probabilities persisted so PR-AUC gets an interval · token-attribution XAI · ordinal risk
+tiers · cross-platform transfer
 
 ---
 
@@ -480,7 +590,8 @@ quoted honestly to whoever staffs that triage.
 ### Questions?
 
 <span class="small">Every number in this deck traces to a committed artifact in <code>results/</code>.<br>
-Repo: code · notebooks · 9 unit tests · 8-cell loss grid · 3-trial sweep · two gold sets · full error taxonomies</span>
+Repo: code · notebooks · <b>30 unit tests</b> · 3 course techniques · 8-cell loss grid · 3-trial sweep ·
+two gold sets · full error taxonomies · bootstrap intervals</span>
 
 ---
 
@@ -510,14 +621,25 @@ test-split numbers are out-of-selection; the gold holdout touched **nothing** �
 selection, not tuning.
 
 **5. "Only 772 holdout rows?"**
-Recall CI ≈ ±3–4 points at n_pos = 355. Adequate for the claims made, and labelling is resumable.
-One duplicate-text pair and 5 sub-`high`-confidence rows are documented in
+We measured it rather than estimating: 20,000-resample bootstrap gives recall **0.890
+[0.857, 0.922]**, **39 missed [28, 51]**, precision 0.616 [0.574, 0.658]. So ±3 points on recall —
+adequate for every claim we make, and labelling is resumable. Two caveats we volunteer: **PR-AUC has
+no interval** (no checkpoint committed, only error-row probabilities stored), and the interval holds
+the trained model **fixed**, so it composes with the 0.054 training non-determinism. One
+duplicate-text pair and 5 sub-`high`-confidence rows are documented in
 `results/holdout_integrity.md` and deliberately **not** repaired — every committed number is
 computed on these exact 772 rows.
 
 **6. "Why no word/document embeddings?"**
-Chose topic modelling as technique #2 because it answers research question ②. Static embeddings
-answer neither question better than a fine-tuned contextual transformer already does.
+We have them — technique #3, `src/embedding_model.py`. Four text-only representations behind one
+identical class-balanced logistic head, and **the result is negative, which is why it is worth
+presenting**: no frozen embedding is distinguishable from a bag of words on gold (TF-IDF 0.711,
+frozen MiniLM 0.709, Doc2Vec 0.683), and the only variant above the XGBoost baseline is **LSA — a
+linear rotation of the same TF-IDF matrix** — by 0.029, inside the CI. A frozen transformer encoder
+is level with TF-IDF while the fine-tuned one reaches 0.804, so **dense representation is not where
+the advantage comes from**. We stop short of "therefore it's fine-tuning": MiniLM differs in
+freezing, capacity and pretraining objective at once. Doc2Vec's failure *is* attributed — LSA sees
+the identical 4,800 documents and beats it by 0.074, so it is data volume, not domain.
 
 **7. "How stable are these numbers?"**
 All runs use HF default seed 42. Re-training four configurations under identical settings moved
@@ -540,12 +662,46 @@ rate 0.197, recall 0.921, precision 0.936). But we will not claim more than that
 trials used `focal_asymmetric@50`, so there is no within-sweep contrast on the loss, and we never
 ran a low-weight/high-lr cell — so a learning-rate × weight *interaction* is not excluded, and it is
 mechanistically plausible (a ×50 positive-class weight amplifies gradients exactly where a high lr
-with batch 4 is already unstable). The honest statement is: **collapse required the high learning
-rate; whether the weight contributed we did not isolate.** One extra cell would settle it.
+with batch 4 is already unstable).
+
+There is a **third data point**, and it adds the axis that makes sense of the other two. Early in
+the project we retrained both towers directly on a small LLM-labelled file — **905 train / 227
+test** — with ω=50 held fixed (`asymetic_loss_atenuation.py`, DeBERTa-v3-**small**). There the model
+**did** collapse outright: recall 100%, precision **37.4%** — exactly that split's base rate —
+PR-AUC 0.580, and 142 false positives, i.e. *every* negative row. The documented fix was to dial ω
+to 5.0 and **anneal it 1.0 → 5.0 across epochs**, which restored a boundary (recall 90.59%,
+precision 72.64% on that split). ⚠️ **Label this exploratory when you say it:** that 1,132-row CSV
+is not among the committed datasets, so the evidence is the console logs plus the committed script,
+and its numbers are **not** comparable to the 772-row holdout figures.
+
+Read all three together and the honest statement gets *stronger*, not weaker: **ω=50 collapses at
+905 training rows, does not collapse at 4,800, and collapses again at 4,800 when the learning rate
+is raised — so collapse is an interaction between penalty magnitude, data volume and optimiser step
+size, not a property of the weight.** What we still have not done is isolate the weight's individual
+contribution: no low-weight cell was ever run at low volume or at the high learning rate. One extra
+cell (`pos_weight@1` at lr 3.8e-05, batch 4) would settle it.
 
 **11. "Your baseline nearly matches DeBERTa on your own label — was the transformer worth it?"**
 That is exactly the trap the gold set exists to expose. On the heuristic label the gap is 0.009;
 on gold it is 0.077. TF-IDF was re-learning our regex, not doing the task.
+
+**12. "A frozen sentence encoder gets your recall for free — why fine-tune?"**
+The sharpest question available, and the answer is measured. On **missed hazards a frozen MiniLM is
+not separable** from our fine-tune (+7 [−7, +21], exact McNemar p = 0.39) and misses *fewer* at the
+point estimate, 32 vs 39. What separates them is the other side of the ledger: it flags **81.7%** of
+the holdout to get there against our 66.5%, and the fine-tune wins on **precision** (+0.104
+[+0.078, +0.131]), on F1 (+0.073 [+0.046, +0.100]) and on overall correctness (McNemar p = 6.6e-13).
+So the defensible claim is that **fine-tuning buys precision at a given recall**, not recall itself —
+and we reworded our own slide rather than keep the flattering version.
+
+**13. "Your two techniques never touch each other."**
+They do now — `analysis/topic_error_integration.py`, slide 17. Projecting all 772 holdout rows onto
+the frozen NMF topics shows the classifier is **least** trustworthy on the one topic the sweep found
+cleanly (gluten/coeliac, precision 0.304, 24.4% of all false positives) and **near-perfect** on the
+diffuse mass the topic model could not subdivide (food poisoning, precision 0.961). Two independent
+instruments agree: 37 of 63 `neutral_allergen_mention` false positives sit in that gluten topic
+(Fisher p = 7.4e-14, Bonferroni-safe over 54 cells). Confound owned: per-topic precision tracks base
+rate at ρ = +0.89, so it measures how far the vocabulary settles the question, not skill alone.
 
 ---
 
@@ -559,18 +715,28 @@ on gold it is 0.077. TF-IDF was re-learning our regex, not doing the task.
 - [ ] **Slide 11** — dot plot: 8 configs on validation (clustered) vs gold (spread) — shows 33× visually
 - [ ] **Slide 12** — weight-response curve, `pos_weight` monotone vs `focal` flat, with a ±0.054 noise band
 - [ ] **Slide 14** — lift table heat-strip (5.28 highlighted)
-- [ ] **Slide 15** — FP bucket comparison: rule vs model, side by side (the "inherited blind spots" figure)
-- [ ] Reuse existing: `results/pr_curve_gold_*.png`, `results/cost_curve_gold_*.png`, `results/topic_model_selection.png`
+- [ ] **Slide 15** — embedding ladder: 6 models on gold PR-AUC with CI whiskers, fine-tuned bar
+      separated from the four frozen ones (the "representation is not the answer" figure)
+- [ ] **Slide 16** — FP bucket comparison: rule vs model, side by side (the "inherited blind spots"
+      figure), with the 5-model dose–response strip beneath it
+- [ ] **Slide 17** — topic × precision plot: 6 NMF topics, precision against base rate, topics 1 and
+      4 labelled (the "crossing the techniques" figure)
+- [ ] Reuse existing: `results/pr_curve_gold_*.png`, `results/cost_curve_gold_*.png`,
+      `results/topic_model_selection.png`, `results/pr_curve_embedding_gold_*.png`
 
 # Rehearsal notes
 
-- Target **14:00** to leave buffer. Slides **5–7** (the two audits) and **9–12** (metric, payoff,
-  saturation, weight response) are the differentiators — do not rush them.
-- If long: drop slide **16** (Limitations — every item also lives on its home slide) and compress
-  slide **13** to 30 s. ⚠️ **Never cut slide 15** — "inherited blind spots" is one of the three
-  sentences below.
+- Target **14:00** to leave buffer, which means **cutting slide 18 (Limitations) by default** —
+  17 content slides is already ~14.2 min. Present it only if you are ahead.
+- Differentiators: **5–7** (the two audits), **9–12** (metric, payoff, saturation, weight response),
+  **15** (the negative embedding result) and **17** (crossing the techniques). Do not rush these.
+- ⚠️ **Never cut slides 15, 16 or 17** — they carry three of the four sentences below, and 15 is the
+  only slide that shows a third course technique.
 - Open with the one-sentence version. Close on the arc, not on a metric.
-- The three sentences that earn the top band, say them slowly:
+- The four sentences that earn the top band, say them slowly:
   1. *"We could not tell our own models apart on our own label."*
   2. *"Bare recall would have selected the broken model — here it is."*
   3. *"65% of the model's false alarms are the label's own blind spots."*
+  4. *"The one topic we found cleanly is where our classifier is least trustworthy."*
+- If asked why the transformer wins, the precise answer is **precision at a given recall** — not
+  recall. A frozen encoder matches our recall (Q&A 12). Say it before someone finds it.
