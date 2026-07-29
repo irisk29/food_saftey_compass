@@ -1,0 +1,32 @@
+Failure mode x NMF K=6 topic, deployed DeBERTa-v3 @ th=0.20 on the 772-row gold holdout
+Spearman rho(gold hazard rate, precision) across topics = 0.886
+
+=== FP ===
+topic                               0   1  2  3  4   5  total
+primary_mode                                                 
+illness_mentioned_not_caused_here  23   5  3  3  0  30     64
+neutral_allergen_mention            9  37  2  4  0  11     63
+generic_complaint_no_hazard         7   2  2  1  0  10     22
+unexplained_fp                      8   0  2  0  3   9     22
+negated_hazard                      7   3  0  0  1   6     17
+secondhand_or_hearsay               2   0  1  0  0   1      4
+hyperbole_or_slang                  2   0  0  0  0   1      3
+strong_negative_sentiment_only      0   1  0  0  0   0      1
+unpleasant_not_unsafe               1   0  0  0  0   0      1
+
+=== FN ===
+topic                        0  1  2  3  4  5  total
+primary_mode                                        
+unexplained_fn               5  4  3  2  2  7     23
+buried_in_long_review        4  0  0  0  0  3      7
+unsafe_handling_no_illness   3  0  0  1  0  1      5
+negation_misread             0  0  0  0  0  1      1
+mild_understated_wording     0  1  0  0  0  0      1
+too_short_weak_signal        0  0  0  0  0  1      1
+positive_review_with_hazard  1  0  0  0  0  0      1
+
+=== Post-hoc concentration tests (Fisher exact, 2x2, two-sided) ===
+Selected after inspecting the table above, so treat as post-hoc; a
+Bonferroni correction over all 9 modes x 6 topics (54 tests) is noted.
+neutral_allergen_mention in topic(s) [1]: 37/63 (58.7%) vs 11/134 of all other FPs; odds ratio 15.91, p = 7.38e-14 (Bonferroni threshold over 54 cells = 9.3e-04)
+illness_mentioned_not_caused_here in topic(s) [0, 5]: 53/64 (82.8%) vs 74/133 of all other FPs; odds ratio 3.84, p = 2.20e-04 (Bonferroni threshold over 54 cells = 9.3e-04)

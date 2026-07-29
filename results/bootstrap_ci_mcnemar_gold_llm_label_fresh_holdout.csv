@@ -1,0 +1,9 @@
+reference,comparator,comparator_display,framing,n_considered,both_correct,both_wrong,reference_only_correct_b,comparator_only_correct_c,n_discordant,exact_binomial_p,chi2_cc_statistic,chi2_cc_p
+deberta_th020,tfidf_lr_th020,TF-IDF + LogReg control (th=0.20),correctness,772,451,145,85,91,176,0.7063708402623415,0.14204545454545456,0.7062559621048525
+deberta_th020,tfidf_lr_th020,TF-IDF + LogReg control (th=0.20),missed_hazards,355,273,25,43,14,57,0.0001538890224443423,13.75438596491228,0.00020833380892646466
+deberta_th020,tfidf_lsa_th020,LSA 300d + LogReg (th=0.20),correctness,772,361,144,175,92,267,4.2467089356009224e-07,25.183520599250937,5.212570640957832e-07
+deberta_th020,tfidf_lsa_th020,LSA 300d + LogReg (th=0.20),missed_hazards,355,273,15,43,24,67,0.027119992403126333,4.835820895522388,0.027874367339946877
+deberta_th020,minilm_th020,MiniLM-L6-v2 frozen + LogReg (th=0.20),correctness,772,377,181,159,55,214,6.633686249053394e-13,49.574766355140184,1.9095401061113768e-12
+deberta_th020,minilm_th020,MiniLM-L6-v2 frozen + LogReg (th=0.20),missed_hazards,355,295,11,21,28,49,0.3916029105474905,0.7346938775510204,0.39136593830755195
+deberta_th020,doc2vec_dbow_th020,Doc2Vec PV-DBOW + LogReg (th=0.20),correctness,772,383,122,153,114,267,0.019870551616344014,5.408239700374532,0.020041916312799845
+deberta_th020,doc2vec_dbow_th020,Doc2Vec PV-DBOW + LogReg (th=0.20),missed_hazards,355,233,26,83,13,96,1.202072479759671e-13,49.59375,1.891152101815962e-12
